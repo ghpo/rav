@@ -878,7 +878,7 @@ pub async fn get_message(
     // Get the message header from cache (use efficient single-message lookup).
     // If the header hasn't been synced yet (e.g. DB was cleared and sync is
     // still running), fall back to parsing the raw headers we already fetched.
-    let (mut msg, thread_messages) = {
+    let (msg, thread_messages) = {
         let folder = folder.clone();
         let raw_headers_for_fallback = raw_headers.clone();
         let attachments_len = attachments.len();
@@ -899,51 +899,11 @@ pub async fn get_message(
         .map_err(|e| AppError::InternalError(format!("Database error: {e}")))?
     };
 
-    // The user is opening this message, so mark it as read. `fetch_body` uses
-    // BODY.PEEK[] and never sets \Seen implicitly, which is what caused new
-    // background-indexed mail to be marked read on arrival. Read state changes
-    // only here (user action) or via the explicit flags endpoint.
-    // Best-effort: a failed IMAP STORE must not prevent viewing the message.
-    if !msg.flags.split(',').any(|f| f.trim() == "\\Seen") {
-        match imap_client
-            .add_flags(&creds, &folder, uid, &["\\Seen"])
-            .await
-        {
-            Ok(()) => {
-                let merged_flags = if msg.flags.is_empty() {
-                    "\\Seen".to_string()
-                } else {
-                    format!("{},\\Seen", msg.flags)
-                };
-                let folder_for_db = folder.clone();
-                let flags_for_db = merged_flags.clone();
-                let _ = db::pool::with_user_db(
-                    &db_pool_manager,
-                    &session.user_hash,
-                    move |conn| {
-                        db::messages::update_message_flags(
-                            conn,
-                            &folder_for_db,
-                            uid,
-                            &flags_for_db,
-                        )?;
-                        db::folders::refresh_unread_count(conn, &folder_for_db)?;
-                        Ok(())
-                    },
-                )
-                .await;
-                msg.flags = merged_flags;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    folder = %folder,
-                    uid = uid,
-                    "failed to mark message as read on open"
-                );
-            }
-        }
-    }
+    // NOTE: do not mark the message as read here. `fetch_body` uses BODY.PEEK[]
+    // so it has no side effects, and marking read on every `get_message` call
+    // would re-mark a message the user just explicitly marked unread (the flag
+    // mutation invalidates this query and triggers a refetch). The client marks
+    // it read once, when the message is actually opened.
 
     // Re-index message with full body text for search.
     // Skip indexing for Spam/Junk/Trash folders.

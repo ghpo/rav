@@ -16,8 +16,6 @@ pub struct MockImapClient {
     folder_status_ext: Mutex<Option<FolderStatusExtended>>,
     should_fail: Mutex<Option<ImapError>>,
     pub appended: Mutex<Vec<(String, Vec<u8>)>>,
-    /// Records every `add_flags` call as `(folder, uid, flags)`.
-    pub added_flags: Mutex<Vec<(String, u32, Vec<String>)>>,
     next_uid: Mutex<u32>,
 }
 
@@ -32,7 +30,6 @@ impl MockImapClient {
             folder_status_ext: Mutex::new(None),
             should_fail: Mutex::new(None),
             appended: Mutex::new(Vec::new()),
-            added_flags: Mutex::new(Vec::new()),
             next_uid: Mutex::new(1),
         }
     }
@@ -166,18 +163,13 @@ impl ImapClient for MockImapClient {
     async fn add_flags(
         &self,
         _creds: &ImapCredentials,
-        folder: &str,
-        uid: u32,
-        flags: &[&str],
+        _folder: &str,
+        _uid: u32,
+        _flags: &[&str],
     ) -> Result<(), ImapError> {
         if let Some(ref err) = *self.should_fail.lock().unwrap() {
             return Err(clone_error(err));
         }
-        self.added_flags.lock().unwrap().push((
-            folder.to_string(),
-            uid,
-            flags.iter().map(|f| f.to_string()).collect(),
-        ));
         Ok(())
     }
 

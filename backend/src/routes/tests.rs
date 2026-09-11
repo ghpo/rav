@@ -1848,66 +1848,6 @@
         assert_eq!(body.as_ref(), &attachment_data);
     }
 
-    /// Regression: opening a message must mark it read explicitly (add \Seen),
-    /// because `fetch_body` now uses BODY.PEEK[] and no longer sets \Seen
-    /// implicitly. Previously the implicit \Seen from BODY[] also caused new
-    /// background-indexed mail to be marked read on arrival.
-    #[tokio::test]
-    async fn get_message_marks_opened_message_as_seen() {
-        let static_dir = setup_static_dir();
-        let data_dir = TempDir::new().unwrap();
-        let config = test_config_with_imap(
-            static_dir.path().to_str().unwrap(),
-            data_dir.path().to_str().unwrap(),
-        );
-        let store = test_store();
-        let (browser_id, account_id, token) = setup_test_account(&store, "alice@example.com");
-        let cipher = crate::folder_cipher::FolderCipher::from_session_token(&token);
-        let inbox_id = cipher.encrypt("INBOX");
-
-        let user_hash = crate::auth::user_data::hash_email("alice@example.com");
-        provision_user_db(data_dir.path().to_str().unwrap(), &user_hash);
-
-        // Seed an unread message (empty flags) so opening it must mark \Seen.
-        let conn = test_open_db(data_dir.path().to_str().unwrap(), &user_hash);
-        crate::db::folders::upsert_folder(&conn, UpsertFolderParams { name: "INBOX", delimiter: None, parent: None, flags_csv: "", is_subscribed: true, total_count: 0, unread_count: 1, uid_validity: 0, highest_modseq: 0 })
-            .unwrap();
-        crate::db::messages::upsert_message(&conn, "INBOX", 42, UpsertMessageParams { message_id: None, in_reply_to: None, references_header: None, subject: "Unread", from_address: "a@b.com", from_name: "A", to_json: "[]", cc_json: "[]", date: "2024-01-01", date_epoch: 0, flags_csv: "", size: 0, has_attachments: false, snippet: "", reaction: None })
-            .unwrap();
-        drop(conn);
-
-        let mock = Arc::new(MockImapClient::new().with_bodies(vec![ImapMessageBody {
-            uid: 42,
-            text_plain: Some("hello".to_string()),
-            text_html: None,
-            attachments: vec![],
-            raw_headers: String::new(),
-            pgp_status: None,
-        }]));
-        let imap_client: Arc<dyn ImapClient> = mock.clone();
-        let app = create_router(AppServices { config, store, imap_client, search_engine: test_search_engine(data_dir.path().to_str().unwrap()), db_pool_manager: test_db_pool_manager(data_dir.path().to_str().unwrap()), ..test_services("/tmp") });
-
-        let mut req = Request::builder()
-            .uri(format!("/api/messages/{inbox_id}/42"))
-            .header("x-requested-with", "XMLHttpRequest");
-        for (name, value) in auth_headers(&browser_id, &account_id, &token) {
-            req = req.header(name, value);
-        }
-        let response = app
-            .oneshot(req.body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let added = mock.added_flags.lock().unwrap().clone();
-        assert!(
-            added
-                .iter()
-                .any(|(f, u, fl)| f == "INBOX" && *u == 42 && fl.iter().any(|x| x == "\\Seen")),
-            "opening a message must call add_flags(INBOX, 42, [\\Seen]); got {added:?}"
-        );
-    }
 
     #[tokio::test]
     async fn download_attachment_strips_control_chars_from_filename() {

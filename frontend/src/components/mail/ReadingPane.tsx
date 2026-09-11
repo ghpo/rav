@@ -29,7 +29,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useUiStore } from "@/stores/useUiStore";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { useMessage } from "@/hooks/useMessages";
+import { useMessage, useUpdateFlags } from "@/hooks/useMessages";
 import { createFadeSlideVariants } from "@/lib/motion/variants";
 import { AnimatedDiv } from "@/lib/motion/AnimatedDiv";
 import { EmailRenderer, hasRemoteResources } from "./EmailRenderer";
@@ -298,6 +298,28 @@ export function ReadingPane() {
     activeFolder,
     selectedMessageUid ?? 0
   );
+  const updateFlags = useUpdateFlags();
+
+  // Mark a message as read once, when it is opened. This must stay in the
+  // client (not the GET handler): the flag mutation invalidates the message
+  // query, so a server-side mark-on-fetch would immediately undo the user's
+  // explicit "mark as unread". The ref guard makes it fire at most once per
+  // opened message, regardless of its read state, so later flag changes
+  // (including mark-unread) are not overwritten.
+  const markReadUidRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (isMobile && mobilePanelView !== "reading") return;
+    if (!data || data.uid !== selectedMessageUid) return;
+    if (markReadUidRef.current === data.uid) return;
+    markReadUidRef.current = data.uid;
+    if (data.flags.includes("\\Seen")) return;
+    updateFlags.mutate({
+      folder: data.folder_name,
+      uid: data.uid,
+      flags: ["\\Seen"],
+      add: true,
+    });
+  }, [data, selectedMessageUid, isMobile, mobilePanelView, updateFlags]);
 
   const paneVariants = useMemo(() => createFadeSlideVariants(effectiveAnimationMode, "x"), [effectiveAnimationMode]);
   const emailTheme = emailThemeState.uid === data?.uid ? emailThemeState.theme : "auto";
