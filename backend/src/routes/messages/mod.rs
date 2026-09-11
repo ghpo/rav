@@ -822,6 +822,30 @@ pub async fn get_message(
         }
     };
 
+    // The header sync intentionally does not fetch BODYSTRUCTURE.
+    // Once the full message is available, persist the actual attachment state.
+    if !attachments.is_empty() {
+        let folder_for_db = folder.clone();
+        db::pool::with_user_db(
+            &db_pool_manager,
+            &session.user_hash,
+            move |conn| {
+                db::messages::update_has_attachments(
+                    conn,
+                    &folder_for_db,
+                    uid,
+                    true,
+                )
+            },
+        )
+        .await
+        .map_err(|e| {
+            AppError::InternalError(format!(
+                "Failed to update attachment status: {e}"
+            ))
+        })?;
+    }
+
     // Get the message header from cache (use efficient single-message lookup).
     // If the header hasn't been synced yet (e.g. DB was cleared and sync is
     // still running), fall back to parsing the raw headers we already fetched.
