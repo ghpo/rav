@@ -45,17 +45,35 @@ pub(crate) async fn connect(
                 ImapError::ConnectionFailed(ConnectError::TlsHandshake)
             })?;
         let client = async_imap::Client::new(ImapStream::Tls(tls_stream));
-        let session = client
+        let mut session = client
             .login(&creds.email, &creds.password)
             .await
             .map_err(|(e, _)| classify_login_error(e))?;
+
+        // Stalwart returns UTF-8 in ENVELOPE/BODYSTRUCTURE. Explicitly
+        // enable RFC 6855 UTF8=ACCEPT so async-imap parses those responses
+        // correctly.
+        session
+            .run_command_and_check_ok("ENABLE UTF8=ACCEPT")
+            .await
+            .map_err(map_imap_error)?;
+
         Ok(session)
     } else {
         let client = async_imap::Client::new(ImapStream::Plain(tcp));
-        let session = client
+        let mut session = client
             .login(&creds.email, &creds.password)
             .await
             .map_err(|(e, _)| classify_login_error(e))?;
+
+        // Stalwart returns UTF-8 in ENVELOPE/BODYSTRUCTURE. Explicitly
+        // enable RFC 6855 UTF8=ACCEPT so async-imap parses those responses
+        // correctly.
+        session
+            .run_command_and_check_ok("ENABLE UTF8=ACCEPT")
+            .await
+            .map_err(map_imap_error)?;
+
         Ok(session)
     }
 }
