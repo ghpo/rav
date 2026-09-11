@@ -38,6 +38,53 @@ fn build_creds(session: &SessionState, config: &AppConfig) -> Result<ImapCredent
     })
 }
 
+/// Convert IMAP attachments into the metadata shape persisted in
+/// `messages.attachments_json` and returned to the client.
+///
+/// `ImapAttachment` also carries the raw bytes (`data`); those must never be
+/// persisted in the cache. Serializing `ImapAttachment` directly produces JSON
+/// that `AttachmentMeta` cannot deserialize (it lacks the `id` field), which
+/// silently empties the attachment list on read. Every writer of
+/// `attachments_json` must go through this helper.
+pub(crate) fn attachment_meta_from_imap(
+    attachments: &[crate::imap::types::ImapAttachment],
+) -> Vec<AttachmentMeta> {
+    attachments
+        .iter()
+        .enumerate()
+        .map(|(i, a)| AttachmentMeta {
+            id: i.to_string(),
+            filename: a.filename.clone(),
+            content_type: a.content_type.clone(),
+            size: a.size,
+            content_id: a.content_id.clone(),
+        })
+        .collect()
+}
+
+/// Replace `cid:` references in the HTML body with inline `data:` URIs built
+/// from the matching attachment bytes. This is what makes embedded images
+/// render inside the sandboxed iframe.
+pub(crate) fn resolve_cid_urls(
+    html: Option<String>,
+    attachments: &[crate::imap::types::ImapAttachment],
+) -> Option<String> {
+    html.map(|mut html| {
+        for att in attachments {
+            if let Some(ref cid) = att.content_id {
+                let cid_url = format!("cid:{cid}");
+                if html.contains(&cid_url) {
+                    use base64::Engine;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&att.data);
+                    let data_uri = format!("data:{};base64,{}", att.content_type, b64);
+                    html = html.replace(&cid_url, &data_uri);
+                }
+            }
+        }
+        html
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Helper: validate IMAP flags from client input
 // ---------------------------------------------------------------------------
@@ -660,10 +707,16 @@ pub async fn get_message(
         db::pool::with_user_db(&db_pool_manager, &session.user_hash, move |conn| {
             let cached_body = db::messages::get_cached_body(conn, &folder, uid)?;
 
-            // Treat a cache hit with missing attachments_json as stale (pre-V006
-            // cache). Re-fetch from IMAP so attachments and inline images are
-            // properly resolved.
-            let usable_cache = cached_body.filter(|c| c.attachments_json.is_some());
+            // A cache hit is only usable when its stored attachment metadata is
+            // well-formed. Pre-V006 rows have no attachments_json, and older
+            // builds (including the background deep-indexer) wrote the raw
+            // `ImapAttachment` shape, which lacks `AttachmentMeta::id`. Both
+            // cases must be re-fetched so the cache is repaired.
+            let usable_cache = cached_body.filter(|c| {
+                c.attachments_json
+                    .as_deref()
+                    .is_some_and(|j| serde_json::from_str::<Vec<AttachmentMeta>>(j).is_ok())
+            });
 
             let Some(cached) = usable_cache else {
                 return Ok(CachedBodyOutcome::NeedsFetch);
@@ -734,18 +787,7 @@ pub async fn get_message(
             // Use HTML directly (frontend sandbox handles security).
             let sanitized_html = body.text_html.clone();
 
-            let attachment_meta: Vec<AttachmentMeta> = body
-                .attachments
-                .iter()
-                .enumerate()
-                .map(|(i, a)| AttachmentMeta {
-                    id: i.to_string(),
-                    filename: a.filename.clone(),
-                    content_type: a.content_type.clone(),
-                    size: a.size,
-                    content_id: a.content_id.clone(),
-                })
-                .collect();
+            let attachment_meta = attachment_meta_from_imap(&body.attachments);
 
             // The lightweight header sync does not fetch BODYSTRUCTURE, so it
             // cannot determine attachment presence. Once the full message is
@@ -776,20 +818,7 @@ pub async fn get_message(
             // Rewrite cid: URLs in the HTML to inline data URIs so the
             // sandboxed iframe can display embedded images without needing
             // network access.
-            let resolved_html = sanitized_html.map(|mut html| {
-                for att in &body.attachments {
-                    if let Some(ref cid) = att.content_id {
-                        let cid_url = format!("cid:{cid}");
-                        if html.contains(&cid_url) {
-                            use base64::Engine;
-                            let b64 = base64::engine::general_purpose::STANDARD.encode(&att.data);
-                            let data_uri = format!("data:{};base64,{}", att.content_type, b64);
-                            html = html.replace(&cid_url, &data_uri);
-                        }
-                    }
-                }
-                html
-            });
+            let resolved_html = resolve_cid_urls(sanitized_html, &body.attachments);
 
             // Serialize attachment metadata for caching.
             let att_json = serde_json::to_string(&attachment_meta).ok();

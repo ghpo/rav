@@ -197,21 +197,32 @@ async fn index_message_bodies(
             }
         };
 
-        // Cache the body in the DB.
+        // Cache the body in the DB. Attachment metadata must use the same
+        // `AttachmentMeta` shape that `get_message` deserializes; serializing
+        // `ImapAttachment` directly would leak the raw bytes and fail to parse
+        // on read, hiding every attachment.
+        let attachment_meta =
+            crate::routes::messages::attachment_meta_from_imap(&body.attachments);
+        let has_attachments = !attachment_meta.is_empty();
         {
-            let att_json = serde_json::to_string(&body.attachments).ok();
+            let att_json = serde_json::to_string(&attachment_meta).ok();
             let detected_theme = body.text_html
                 .as_ref()
                 .and_then(|h| email_theme::detect_email_theme(h))
                 .map(|t| t.as_i32());
+            let resolved_html =
+                crate::routes::messages::resolve_cid_urls(body.text_html.clone(), &body.attachments);
 
             let folder = folder.clone();
-            let text_html = body.text_html.clone();
             let text_plain = body.text_plain.clone();
             let raw_headers = body.raw_headers.clone();
             let uid = *uid;
             db::pool::with_user_db(db_pool_manager, user_hash, move |conn| {
-                db::messages::cache_message_body(conn, &folder, uid, CacheMessageBodyParams { html: text_html.as_deref(), text: text_plain.as_deref(), attachments_json: att_json.as_deref(), raw_headers: Some(&raw_headers), email_theme: detected_theme })
+                db::messages::cache_message_body(conn, &folder, uid, CacheMessageBodyParams { html: resolved_html.as_deref(), text: text_plain.as_deref(), attachments_json: att_json.as_deref(), raw_headers: Some(&raw_headers), email_theme: detected_theme })?;
+                if has_attachments {
+                    db::messages::update_has_attachments(conn, &folder, uid, true)?;
+                }
+                Ok(())
             })
             .await
             .map_err(|e| format!("DB error: {e}"))?;
@@ -783,5 +794,80 @@ mod tests {
             }
         }
         assert!(saw_real_new_messages, "expected a FolderStateChanged event for the new message");
+    }
+
+    /// Regression: the deep-index phase must persist attachments in the same
+    /// `AttachmentMeta` JSON shape that `get_message` deserializes. It used to
+    /// serialize `ImapAttachment` (which lacks `id` and embeds the raw bytes),
+    /// so the cache hit failed to parse and the UI showed no attachments.
+    #[tokio::test]
+    async fn deep_index_persists_attachments_as_attachment_meta() {
+        let data_dir = TempDir::new().unwrap();
+        let user_hash = seed_user_with_one_message(data_dir.path(), 0).await;
+        let db_pool_manager = test_db_pool_manager(data_dir.path());
+
+        // Deep indexing must be enabled for the sync phase to fetch bodies.
+        db::pool::with_user_db(&db_pool_manager, &user_hash, |conn| {
+            conn.execute("INSERT OR IGNORE INTO display_preferences (id) VALUES (1)", [])
+                .map_err(|e| e.to_string())?;
+            conn.execute("UPDATE display_preferences SET deep_index = 1 WHERE id = 1", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let creds = test_creds();
+        let event_bus = Arc::new(EventBus::new());
+        let search_engine = Arc::new(crate::search::engine::SearchEngine::new(data_dir.path().to_path_buf()));
+
+        let body = crate::imap::types::ImapMessageBody {
+            uid: 1,
+            text_plain: Some("hello".to_string()),
+            text_html: Some("<p>hello</p>".to_string()),
+            attachments: vec![crate::imap::types::ImapAttachment {
+                filename: Some("doc.pdf".to_string()),
+                content_type: "application/pdf".to_string(),
+                size: 4,
+                data: vec![1, 2, 3, 4],
+                content_id: None,
+            }],
+            raw_headers: String::new(),
+            pgp_status: None,
+        };
+
+        let mock = MockImapClient::new()
+            .with_headers(vec![new_header(1, "Existing", "Carol")])
+            .with_bodies(vec![body]);
+        let imap_client: Arc<dyn ImapClient> = Arc::new(mock);
+
+        run_sync(SyncCtx { user_hash: &user_hash, creds: &creds, imap_client: imap_client.as_ref(), event_bus: &event_bus, search_engine: &search_engine, db_pool_manager: &db_pool_manager })
+            .await
+            .expect("sync should succeed");
+
+        let (attachments_json, has_attachments) =
+            db::pool::with_user_db(&db_pool_manager, &user_hash, |conn| {
+                let cached = db::messages::get_cached_body(conn, "INBOX", 1)
+                    .map_err(|e| e.to_string())?
+                    .expect("deep index should have cached the body");
+                let msg = db::messages::get_single_message(conn, "INBOX", 1)
+                    .map_err(|e| e.to_string())?
+                    .expect("message should exist");
+                Ok((cached.attachments_json, msg.has_attachments))
+            })
+            .await
+            .unwrap();
+
+        assert!(has_attachments, "deep index must flag the message as having attachments");
+
+        let json = attachments_json.expect("attachments_json should be populated");
+        let parsed: Vec<crate::routes::messages::types::AttachmentMeta> =
+            serde_json::from_str(&json).expect("attachments_json must deserialize as AttachmentMeta");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].filename.as_deref(), Some("doc.pdf"));
+        assert!(
+            !json.contains("data"),
+            "raw attachment bytes must never be persisted in attachments_json"
+        );
     }
 }
