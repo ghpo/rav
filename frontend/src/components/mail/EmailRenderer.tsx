@@ -12,8 +12,13 @@ interface EmailRendererProps {
   emailTheme?: EmailTheme | null;
 }
 
-// We want to
-const MAX_SAFE_CHARACTERS = 150000;
+// Upper bound on the HTML we process/render in the sandboxed iframe.
+// Inline images are embedded by the backend as base64 `data:` URIs, which
+// inflate the HTML ~1.33x. Signature images routinely push a message past
+// 150k, so a low cap clipped the image and showed "[Message clipped due to
+// length]". Keep a generous headroom while still guarding against pathological
+// bodies.
+const MAX_SAFE_CHARACTERS = 3000000;
 
 /**
  * Strip remote resource URLs from HTML, keeping data: and cid: URIs intact.
