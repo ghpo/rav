@@ -22,7 +22,7 @@ pub(crate) use super::connection::connect;
 /// IDLE push path (idle.rs) must use this constant so the set of fetched attributes stays
 /// in sync.
 pub(crate) const HEADER_FETCH_ITEMS: &str =
-    "(UID ENVELOPE INTERNALDATE FLAGS BODYSTRUCTURE RFC822.SIZE BODY.PEEK[HEADER.FIELDS \
+    "(UID ENVELOPE INTERNALDATE FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS \
      (Message-ID In-Reply-To References Content-Class x-ms-exchange-generated-message-class)])";
 
 #[cfg(test)]
