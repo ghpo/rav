@@ -8,6 +8,7 @@ import {
   Users,
   Calendar,
   Settings,
+  Printer,
   Moon,
   Sun,
   Keyboard,
@@ -32,33 +33,49 @@ function NavButton({
   active,
   disabled,
   onClick,
+  href,
 }: {
   icon: React.ReactNode;
   label: string;
   active?: boolean;
   disabled?: boolean;
   onClick?: (event: NavButtonClickEvent) => void;
+  href?: string;
 }) {
   const tooltipLabel = disabled ? `${label} (coming soon)` : label;
   const shouldAnimate = useUiStore((s) => s.effectiveAnimationMode) !== "off";
 
+  const className = cn(
+    "flex size-10 items-center justify-center rounded-lg transition-colors",
+    disabled
+      ? "cursor-not-allowed text-sidebar-foreground/30"
+      : "text-sidebar-foreground/70 hover:bg-sidebar-foreground/10 active:bg-sidebar-foreground/15 hover:text-sidebar-foreground",
+    active && "bg-sidebar-accent text-sidebar-foreground active:bg-sidebar-accent/80",
+  );
+
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
-        <button
-          type="button"
-          onClick={onClick}
-          aria-label={tooltipLabel}
-          className={cn(
-            "flex size-10 items-center justify-center rounded-lg transition-colors",
-            disabled
-              ? "cursor-not-allowed text-sidebar-foreground/30"
-              : "text-sidebar-foreground/70 hover:bg-sidebar-foreground/10 active:bg-sidebar-foreground/15 hover:text-sidebar-foreground",
-            active && "bg-sidebar-accent text-sidebar-foreground active:bg-sidebar-accent/80",
-          )}
-        >
-          {icon}
-        </button>
+        {href ? (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={tooltipLabel}
+            className={className}
+          >
+            {icon}
+          </a>
+        ) : (
+          <button
+            type="button"
+            onClick={onClick}
+            aria-label={tooltipLabel}
+            className={className}
+          >
+            {icon}
+          </button>
+        )}
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
@@ -179,6 +196,11 @@ export function NavRail() {
             label="Settings"
             active={viewMode === "settings"}
             onClick={() => setViewMode(viewMode === "settings" ? "mail" : "settings")}
+          />
+          <NavButton
+            icon={<Printer className="size-5" />}
+            label="Produção"
+            href="https://producao.ghpo.com.br"
           />
         </div>
 
