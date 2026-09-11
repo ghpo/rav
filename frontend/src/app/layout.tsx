@@ -15,8 +15,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Rav",
-  description: "A modern email client built with Rust and Next.js",
+  title: "GHPO",
+  description: "GHPO Mail",
 };
 
 export default function RootLayout({

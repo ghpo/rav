@@ -72,7 +72,7 @@ pub async fn totp_setup(Extension(session): Extension<SessionState>) -> Response
         }
     };
 
-    let url = match totp::get_url(&secret, &session.email, "Rav Mail") {
+    let url = match totp::get_url(&secret, &session.email, "GHPO Mail") {
         Ok(u) => u,
         Err(e) => {
             tracing::error!(error = %e, "totp/setup: URL generation failed");
