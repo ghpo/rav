@@ -747,6 +747,32 @@ pub async fn get_message(
                 })
                 .collect();
 
+            // The lightweight header sync does not fetch BODYSTRUCTURE, so it
+            // cannot determine attachment presence. Once the full message is
+            // opened and parsed, persist the accurate attachment status.
+            let has_attachments = !body.attachments.is_empty();
+            if has_attachments {
+                let folder_for_db = folder.clone();
+                db::pool::with_user_db(
+                    &db_pool_manager,
+                    &session.user_hash,
+                    move |conn| {
+                        db::messages::update_has_attachments(
+                            conn,
+                            &folder_for_db,
+                            uid,
+                            true,
+                        )
+                    },
+                )
+                .await
+                .map_err(|e| {
+                    AppError::InternalError(format!(
+                        "Failed to update attachment status: {e}"
+                    ))
+                })?;
+            }
+
             // Rewrite cid: URLs in the HTML to inline data URIs so the
             // sandboxed iframe can display embedded images without needing
             // network access.

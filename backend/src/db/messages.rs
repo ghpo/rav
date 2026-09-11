@@ -429,6 +429,20 @@ pub fn update_email_theme(
     Ok(())
 }
 
+pub fn update_has_attachments(
+    conn: &Connection,
+    folder: &str,
+    uid: u32,
+    has_attachments: bool,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE messages SET has_attachments = ?1 WHERE folder = ?2 AND uid = ?3",
+        params![has_attachments as i32, folder, uid],
+    )
+    .map_err(|e| format!("Failed to update attachment status: {e}"))?;
+    Ok(())
+}
+
 /// Cached body data including attachment metadata and raw headers.
 pub struct CachedBody {
     pub html: Option<String>,

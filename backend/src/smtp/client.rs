@@ -1,6 +1,7 @@
 //! SMTP client abstraction and real implementation.
 
 use async_trait::async_trait;
+use base64::Engine;
 use tracing::warn;
 
 use crate::error::ConnectError;
@@ -37,6 +38,74 @@ pub trait SmtpClient: Send + Sync {
 /// Normalize line endings to CRLF.
 fn to_crlf(s: &str) -> String {
     s.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n")
+}
+
+/// Convert data URI images in HTML into inline CID references.
+fn extract_data_uri_images(
+    html: &str,
+    existing_count: usize,
+) -> (String, Vec<AttachmentData>) {
+    let re = match regex::Regex::new(
+        r#"(?i)<img\b[^>]*\bsrc\s*=\s*["'](data:image/([a-zA-Z0-9.+-]+);base64,([^"']+))["'][^>]*>"#,
+    ) {
+        Ok(re) => re,
+        Err(_) => return (html.to_string(), Vec::new()),
+    };
+
+    let mut rewritten = String::with_capacity(html.len());
+    let mut attachments = Vec::new();
+    let mut last = 0;
+
+    for caps in re.captures_iter(html) {
+        let whole = match caps.get(0) {
+            Some(m) => m,
+            None => continue,
+        };
+
+        let ext = match caps.get(2) {
+            Some(m) => m.as_str().to_lowercase(),
+            None => continue,
+        };
+
+        let encoded = match caps.get(3) {
+            Some(m) => m.as_str(),
+            None => continue,
+        };
+
+        let data = match base64::engine::general_purpose::STANDARD.decode(encoded) {
+            Ok(data) => data,
+            Err(_) => continue,
+        };
+
+        let cid = format!(
+            "rav-inline-{}-{}@webmail",
+            existing_count,
+            attachments.len()
+        );
+
+        rewritten.push_str(&html[last..whole.start()]);
+
+        let original = whole.as_str();
+        let replacement = format!("cid:{}", cid);
+        let new_tag = original.replacen(
+            caps.get(1).map(|m| m.as_str()).unwrap_or(""),
+            &replacement,
+            1,
+        );
+
+        rewritten.push_str(&new_tag);
+        last = whole.end();
+
+        attachments.push(AttachmentData {
+            filename: format!("inline-{}.{}", attachments.len() + 1, ext),
+            content_type: format!("image/{}", ext),
+            data,
+            content_id: Some(cid),
+        });
+    }
+
+    rewritten.push_str(&html[last..]);
+    (rewritten, attachments)
 }
 
 /// Extract envelope headers from formatted RFC 822 bytes, stripping MIME-specific
@@ -250,18 +319,25 @@ impl SmtpClient for RealSmtpClient {
             builder = builder.raw_header(HeaderValue::new(name, "auto-replied".to_string()));
         }
 
-        // Separate inline images (those with content_id referenced in HTML)
-        // from regular file attachments.
-        let html_body = message.html_body.as_deref().unwrap_or("");
+        // Convert embedded data URI images (used by signatures) into MIME inline images.
+        let mut attachments = message.attachments.clone();
+        let (html_body, mut data_uri_atts) = if let Some(html) = message.html_body.as_deref() {
+            extract_data_uri_images(html, attachments.len())
+        } else {
+            (String::new(), Vec::new())
+        };
+        attachments.append(&mut data_uri_atts);
+
+        // Separate inline images from regular file attachments.
         let (inline_atts, file_atts): (Vec<_>, Vec<_>) =
-            message.attachments.iter().partition(|att| {
+            attachments.iter().partition(|att| {
                 att.content_id
                     .as_ref()
                     .is_some_and(|cid| html_body.contains(&format!("cid:{cid}")))
             });
 
         // Build the body part(s).
-        let body_part = if let Some(ref html) = message.html_body {
+        let body_part = if message.html_body.is_some() {
             if inline_atts.is_empty() {
                 MultiPart::alternative()
                     .singlepart(
@@ -272,13 +348,13 @@ impl SmtpClient for RealSmtpClient {
                     .singlepart(
                         SinglePart::builder()
                             .content_type(ContentType::TEXT_HTML)
-                            .body(html.clone()),
+                            .body(html_body.clone()),
                     )
             } else {
                 let mut related = MultiPart::related().singlepart(
                     SinglePart::builder()
                         .content_type(ContentType::TEXT_HTML)
-                        .body(html.clone()),
+                        .body(html_body.clone()),
                 );
                 for att in &inline_atts {
                     let ct: ContentType = att
@@ -509,6 +585,22 @@ mod wrap_tests {
             micalg: "pgp-sha256".into(),
         };
         assert!(wrap_pgp_mime(&inner_message("Hi"), &params).is_err());
+    }
+
+    #[test]
+    fn data_uri_image_is_converted_to_inline_cid() {
+        let html = r#"<p>Hello</p><img src="data:image/png;base64,aGVsbG8="/>"#;
+
+        let (rewritten, attachments) = extract_data_uri_images(html, 0);
+
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].content_type, "image/png");
+        assert_eq!(attachments[0].data, b"hello");
+        assert!(attachments[0].content_id.is_some());
+
+        let cid = attachments[0].content_id.as_ref().unwrap();
+        assert!(rewritten.contains(&format!("src=\"cid:{cid}\"")));
+        assert!(!rewritten.contains("data:image/png;base64,"));
     }
 
     #[test]
