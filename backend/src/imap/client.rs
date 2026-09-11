@@ -562,8 +562,11 @@ impl ImapClient for RealImapClient {
 
         let uid_str = uid.to_string();
         let body = {
+            // BODY.PEEK[] (not BODY[]) so fetching the message to render or
+            // index it does not implicitly set the \Seen flag. Marking as read
+            // is an explicit action done by the caller when the user opens it.
             let mut fetch_stream = session
-                .uid_fetch(&uid_str, "(UID BODY[])")
+                .uid_fetch(&uid_str, "(UID BODY.PEEK[])")
                 .await
                 .map_err(map_imap_error)?;
 
@@ -578,7 +581,7 @@ impl ImapClient for RealImapClient {
             })?;
 
             let raw = fetch.body().ok_or_else(|| {
-                ImapError::ProtocolError("BODY[] not returned by server".to_string())
+                ImapError::ProtocolError("BODY.PEEK[] not returned by server".to_string())
             })?;
 
             use mail_parser::MimeHeaders;
