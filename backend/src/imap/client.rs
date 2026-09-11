@@ -370,7 +370,8 @@ impl ImapClient for RealImapClient {
             })?;
 
         let headers = {
-            // Fetch ENVELOPE, FLAGS, BODYSTRUCTURE, RFC822.SIZE, and threading headers.
+            // Fetch ENVELOPE, FLAGS, RFC822.SIZE, and threading headers.
+            // BODYSTRUCTURE is intentionally omitted from this lightweight sync.
             // We only fetch Message-ID, In-Reply-To, and References (a few bytes per message)
             // rather than full raw headers, to keep bulk syncs lightweight.
             let mut fetch_stream = session
@@ -490,10 +491,8 @@ impl ImapClient for RealImapClient {
 
                 let flags: Vec<String> = fetch.flags().map(|f| flag_to_string(&f)).collect();
 
-                let has_attach = fetch
-                    .bodystructure()
-                    .map(|bs| has_attachments(bs))
-                    .unwrap_or(false);
+                // BODYSTRUCTURE is not fetched during header synchronization.
+                let has_attach = false;
 
                 let size = fetch.size.unwrap_or(0);
 
