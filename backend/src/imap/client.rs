@@ -22,8 +22,8 @@ pub(crate) use super::connection::connect;
 /// IDLE push path (idle.rs) must use this constant so the set of fetched attributes stays
 /// in sync.
 pub(crate) const HEADER_FETCH_ITEMS: &str =
-    "(UID ENVELOPE INTERNALDATE FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS \
-     (Message-ID In-Reply-To References Content-Class x-ms-exchange-generated-message-class)])";
+    "(UID INTERNALDATE FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS \
+     (Date From To Cc Subject Message-ID In-Reply-To References Content-Class x-ms-exchange-generated-message-class)])";
 
 #[cfg(test)]
 #[path = "mock.rs"]
@@ -397,46 +397,63 @@ impl ImapClient for RealImapClient {
                     mail_parser::MessageParser::default().parse(raw)
                 });
 
-                let (subject, from, to, cc, date) = if let Some(env) = fetch.envelope() {
-                    let subject = env
-                        .subject
-                        .as_ref()
-                        .and_then(|b| std::str::from_utf8(b).ok())
-                        .map(decode_rfc2047);
+                let (subject, from, to, cc, date) = if let Some(parsed) =
+                    raw_header_bytes.and_then(|raw| mail_parser::MessageParser::default().parse(raw))
+                {
+                    let subject = parsed.subject().map(decode_rfc2047);
 
-                    let from: Vec<EmailAddress> = env
-                        .from
-                        .as_ref()
-                        .map(|addrs| addrs.iter().map(imap_address_to_email).collect())
+                    let from = parsed
+                        .from()
+                        .map(|addr| {
+                            addr.iter()
+                                .filter_map(|a| {
+                                    a.address().map(|address| EmailAddress {
+                                        name: a.name().map(str::to_string),
+                                        address: address.to_string(),
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
                         .unwrap_or_default();
 
-                    let to: Vec<EmailAddress> = env
-                        .to
-                        .as_ref()
-                        .map(|addrs| addrs.iter().map(imap_address_to_email).collect())
+                    let to = parsed
+                        .to()
+                        .map(|addr| {
+                            addr.iter()
+                                .filter_map(|a| {
+                                    a.address().map(|address| EmailAddress {
+                                        name: a.name().map(str::to_string),
+                                        address: address.to_string(),
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
                         .unwrap_or_default();
 
-                    let cc: Vec<EmailAddress> = env
-                        .cc
-                        .as_ref()
-                        .map(|addrs| addrs.iter().map(imap_address_to_email).collect())
+                    let cc = parsed
+                        .cc()
+                        .map(|addr| {
+                            addr.iter()
+                                .filter_map(|a| {
+                                    a.address().map(|address| EmailAddress {
+                                        name: a.name().map(str::to_string),
+                                        address: address.to_string(),
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
                         .unwrap_or_default();
 
-                    let date = env
-                        .date
-                        .as_ref()
-                        .and_then(|b| std::str::from_utf8(b).ok())
-                        .map(|s| s.to_string());
+                    let date = parsed
+                        .date()
+                        .map(|d| d.to_rfc822());
 
                     (subject, from, to, cc, date)
                 } else {
-                    // No envelope — we can't fill subject/from/to/date from the
-                    // small threading-only header fetch, so leave them empty.
-                    // They'll be populated when the user opens the message body.
                     tracing::warn!(
                         uid = uid,
                         folder = %folder,
-                        "ENVELOPE missing for message, headers will be empty until body is fetched"
+                        "Unable to parse message headers"
                     );
                     (None, vec![], vec![], vec![], None)
                 };
