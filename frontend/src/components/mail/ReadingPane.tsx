@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { AnimatePresence } from "framer-motion";
 import {
   ChevronDown,
@@ -29,7 +29,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useUiStore } from "@/stores/useUiStore";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { useMessage, useUpdateFlags } from "@/hooks/useMessages";
+import { useMessage } from "@/hooks/useMessages";
 import { createFadeSlideVariants } from "@/lib/motion/variants";
 import { AnimatedDiv } from "@/lib/motion/AnimatedDiv";
 import { EmailRenderer, hasRemoteResources } from "./EmailRenderer";
@@ -299,18 +299,6 @@ export function ReadingPane() {
     selectedMessageUid ?? 0
   );
 
-  const updateFlags = useUpdateFlags();
-  // Refs so the mark-as-read timer callback always sees fresh values without
-  // making them deps that restart the timer on flag changes (e.g. starring).
-  const updateFlagsMutateRef = useRef(updateFlags.mutate);
-  const activeFolderRef = useRef(activeFolder);
-  const dataRef = useRef(data);
-  useLayoutEffect(() => {
-    updateFlagsMutateRef.current = updateFlags.mutate;
-    activeFolderRef.current = activeFolder;
-    dataRef.current = data;
-  });
-
   const paneVariants = useMemo(() => createFadeSlideVariants(effectiveAnimationMode, "x"), [effectiveAnimationMode]);
   const emailTheme = emailThemeState.uid === data?.uid ? emailThemeState.theme : "auto";
 
@@ -330,34 +318,13 @@ export function ReadingPane() {
   // Auto-switch to plain text mode for plaintext-only emails
   useEffect(() => {
     const { setReadingBodyMode } = useUiStore.getState();
-    const current = dataRef.current;
+    const current = data;
     if (current && !current.html && current.text) {
       setReadingBodyMode("plain");
     } else {
       setReadingBodyMode("html");
     }
   }, [data?.uid, data?.html, data?.text]);
-
-  // Auto-mark unread messages as read after a 1.5s dwell timer.
-  // On mobile, only start the timer when the reading pane is visible.
-  // All mutable values (data, mutate fn, folder) are accessed via refs so that
-  // flag changes (e.g. starring) do not restart the timer.
-  useEffect(() => {
-    if (isMobile && mobilePanelView !== "reading") return;
-    const current = dataRef.current;
-    if (!current || current.flags.includes("\\Seen")) return;
-
-    const uid = current.uid;
-    const timer = setTimeout(() => {
-      updateFlagsMutateRef.current({
-        folder: activeFolderRef.current,
-        uid,
-        flags: ["\\Seen"],
-        add: true,
-      });
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [data?.uid, data?.folder_name, mobilePanelView, isMobile]);
 
   // No message selected
   if (selectedMessageUid === null) {
