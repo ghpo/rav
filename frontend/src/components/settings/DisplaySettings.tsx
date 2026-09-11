@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Code2, FileText, Loader2, Monitor, Moon, Search, Sun } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -8,6 +8,8 @@ import {
   useUpdateDisplayPreferences,
   parseMobileNavTabs,
 } from "@/hooks/useDisplayPreferences";
+import { useCustomNavLink, useUpdateCustomNavLink } from "@/hooks/useCustomNavLink";
+import { CUSTOM_LINK_ICONS } from "@/lib/custom-link-icons";
 import { runThemeSpreadTransition } from "@/lib/motion/theme-spread";
 import { useUiStore } from "@/stores/useUiStore";
 import type { ThemeMode } from "@/stores/useUiStore";
@@ -252,6 +254,8 @@ export function DisplaySettings() {
 
       <MobileNavSection prefs={prefs} updatePrefs={updatePrefs} />
 
+      <CustomShortcutSection />
+
       <button
         type="button"
         onClick={handleReset}
@@ -362,6 +366,120 @@ function MobileNavSection({
         </div>
       </div>
 
+    </div>
+  );
+}
+
+function CustomShortcutSection() {
+  const { data: link } = useCustomNavLink();
+  const updateLink = useUpdateCustomNavLink();
+  const [url, setUrl] = useState("");
+  const [icon, setIcon] = useState("printer");
+
+  useEffect(() => {
+    if (link) {
+      setUrl(link.url);
+      setIcon(link.icon);
+    }
+    // Re-sync the form only when the stored values change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [link?.url, link?.icon]);
+
+  const handleSave = () => {
+    const trimmed = url.trim();
+    if (trimmed && !/^https?:\/\//i.test(trimmed)) {
+      toast.error("O link deve começar com http:// ou https://");
+      return;
+    }
+    updateLink.mutate(
+      { url: trimmed, icon },
+      {
+        onSuccess: () => toast.success("Atalho salvo"),
+        onError: (e) => toast.error(`Falha ao salvar: ${e.message}`),
+      },
+    );
+  };
+
+  const handleRemove = () => {
+    updateLink.mutate(
+      { url: "" },
+      {
+        onSuccess: () => toast.success("Atalho removido"),
+        onError: (e) => toast.error(`Falha ao remover: ${e.message}`),
+      },
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold">Shortcut button</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Adicione um link rápido abaixo de Settings no menu lateral.
+        </p>
+      </div>
+
+      <div className="space-y-4 rounded-lg border border-border p-4">
+        <div>
+          <label htmlFor="custom-link-url" className="text-sm font-medium">
+            Link URL
+          </label>
+          <input
+            id="custom-link-url"
+            type="url"
+            inputMode="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://exemplo.com"
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        </div>
+
+        <div>
+          <div className="text-sm font-medium">Ícone</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {CUSTOM_LINK_ICONS.map(({ key, label, Icon }) => (
+              <button
+                key={key}
+                type="button"
+                title={label}
+                aria-label={label}
+                aria-pressed={icon === key}
+                onClick={() => setIcon(key)}
+                className={cn(
+                  "flex size-9 items-center justify-center rounded-md border transition-colors",
+                  icon === key
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                <Icon className="size-4" />
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={updateLink.isPending}
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+          >
+            Save
+          </button>
+          {link?.url ? (
+            <button
+              type="button"
+              onClick={handleRemove}
+              disabled={updateLink.isPending}
+              className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline disabled:opacity-50"
+            >
+              Remover botão
+            </button>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }

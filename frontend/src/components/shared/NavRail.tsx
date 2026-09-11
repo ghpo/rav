@@ -8,7 +8,6 @@ import {
   Users,
   Calendar,
   Settings,
-  Printer,
   Moon,
   Sun,
   Keyboard,
@@ -21,6 +20,8 @@ import { cn } from "@/lib/utils";
 import { useComposeStore } from "@/stores/useComposeStore";
 import { useUiStore } from "@/stores/useUiStore";
 import { useUpdateDisplayPreferences } from "@/hooks/useDisplayPreferences";
+import { useCustomNavLink } from "@/hooks/useCustomNavLink";
+import { getCustomLinkIcon } from "@/lib/custom-link-icons";
 import { ConnectionStatus } from "@/components/shared/ConnectionStatus";
 import { useWsStatus } from "@/lib/ws-context";
 import { useQueryClient } from "@tanstack/react-query";
@@ -102,6 +103,15 @@ function useResolvedTheme() {
   return theme;
 }
 
+/** Tooltip label for a shortcut: its hostname when parseable, else the raw URL. */
+function shortcutLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 const THEME_STORAGE_KEY = "rav-theme";
 
 export function NavRail() {
@@ -114,6 +124,8 @@ export function NavRail() {
   const effectiveAnimationMode = useUiStore((s) => s.effectiveAnimationMode);
   const updatePrefs = useUpdateDisplayPreferences();
   const resolvedTheme = useResolvedTheme();
+  const { data: customLink } = useCustomNavLink();
+  const CustomLinkIcon = getCustomLinkIcon(customLink?.icon);
 
   const toggleTheme = useCallback((event: NavButtonClickEvent) => {
     const next = resolvedTheme === "dark" ? "light" : "dark";
@@ -197,11 +209,13 @@ export function NavRail() {
             active={viewMode === "settings"}
             onClick={() => setViewMode(viewMode === "settings" ? "mail" : "settings")}
           />
-          <NavButton
-            icon={<Printer className="size-5" />}
-            label="Produção"
-            href="https://producao.ghpo.com.br"
-          />
+          {customLink?.url ? (
+            <NavButton
+              icon={<CustomLinkIcon className="size-5" />}
+              label={shortcutLabel(customLink.url)}
+              href={customLink.url}
+            />
+          ) : null}
         </div>
 
         {/* Spacer */}

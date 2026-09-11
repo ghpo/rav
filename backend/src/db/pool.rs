@@ -177,6 +177,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (30, include_str!("../../migrations/V030__draft_staging.sql")),
     (31, include_str!("../../migrations/V031__outbox.sql")),
     (32, include_str!("../../migrations/V032__repair_attachments_json.sql")),
+    (33, include_str!("../../migrations/V033__custom_nav_link.sql")),
 ];
 
 #[cfg(test)]

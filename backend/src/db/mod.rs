@@ -4,6 +4,7 @@ pub mod mfa;
 pub mod stickers;
 pub mod contact_groups;
 pub mod contacts;
+pub mod custom_nav_link;
 pub mod display_preferences;
 pub mod drafts;
 pub mod filters;

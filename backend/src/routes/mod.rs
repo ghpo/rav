@@ -6,6 +6,7 @@ pub mod calendar;
 pub mod stickers;
 pub mod contact_groups;
 pub mod contacts;
+pub mod custom_nav_link;
 pub mod display_preferences;
 pub mod drafts;
 pub mod filters;
@@ -410,6 +411,11 @@ pub fn create_router(svc: AppServices) -> Router {
             "/settings/display",
             get(display_preferences::get_display_preferences)
                 .put(display_preferences::update_display_preferences),
+        )
+        .route(
+            "/settings/custom-link",
+            get(custom_nav_link::get_custom_nav_link)
+                .put(custom_nav_link::update_custom_nav_link),
         )
         .route(
             "/settings/notifications",
