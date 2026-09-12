@@ -200,7 +200,10 @@ impl RealExternalSqlClient {
             .tcp_port(config.connection.port)
             .user(Some(config.connection.user.clone()))
             .pass(Some(config.connection.password.clone()))
-            .db_name(Some(config.connection.database.clone()));
+            .db_name(Some(config.connection.database.clone()))
+            // Force a charset that matches the configured data, so the server
+            // does not transcode rows into invalid byte sequences.
+            .init(vec!["SET NAMES utf8mb4".to_string()]);
 
         if config.connection.tls {
             let ssl = mysql::SslOpts::default()
@@ -212,6 +215,15 @@ impl RealExternalSqlClient {
         let pool = mysql::Pool::new(builder).map_err(|e| e.to_string())?;
         Ok(Self { config, pool })
     }
+}
+
+/// Build a lossy UTF-8 string from raw bytes.
+///
+/// The external database may use a charset that does not round-trip cleanly
+/// (e.g. latin1 columns with accented text). Reading as bytes and decoding
+/// lossily avoids a hard failure on a single undecodable row.
+fn text(bytes: Vec<u8>) -> String {
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Borrow a pooled connection pinned to READ ONLY for this session.
@@ -255,14 +267,14 @@ impl ExternalSqlClient for RealExternalSqlClient {
 
         tokio::task::spawn_blocking(move || {
             let mut conn = read_only_conn(&pool)?;
-            let row: Option<(u64, Option<String>, Option<i64>)> = conn
+            let row: Option<(u64, Option<Vec<u8>>, Option<i64>)> = conn
                 .exec_first(&query, (&email,))
                 .map_err(|e| ExternalError::Query(e.to_string()))?;
 
             let Some((id, hash, system)) = row else {
                 return Err(ExternalError::InvalidCredentials);
             };
-            let hash = hash.ok_or(ExternalError::InvalidCredentials)?;
+            let hash = hash.map(text).ok_or(ExternalError::InvalidCredentials)?;
             let ok = bcrypt::verify(&password, &hash).unwrap_or(false);
             if !ok {
                 return Err(ExternalError::InvalidCredentials);
@@ -303,17 +315,17 @@ impl ExternalSqlClient for RealExternalSqlClient {
         let offset = page.saturating_mul(per_page);
         tokio::task::spawn_blocking(move || {
             let mut conn = read_only_conn(&pool)?;
-            let rows: Vec<(u32, String, String, String, String)> = conn
+            let rows: Vec<(u32, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)> = conn
                 .exec(&query, (system, per_page, offset))
                 .map_err(|e| ExternalError::Query(e.to_string()))?;
             Ok(rows
                 .into_iter()
                 .map(|(id, subject, sender, date, snippet)| ExternalItem {
                     id,
-                    subject,
-                    sender,
-                    date,
-                    snippet,
+                    subject: text(subject),
+                    sender: text(sender),
+                    date: text(date),
+                    snippet: text(snippet),
                     body_html: None,
                     body_text: None,
                 })
@@ -332,18 +344,20 @@ impl ExternalSqlClient for RealExternalSqlClient {
         let query = self.config.queries.detail.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = read_only_conn(&pool)?;
-            let row: Option<(u32, String, String, String, Option<String>, Option<String>)> = conn
-                .exec_first(&query, (id, system))
-                .map_err(|e| ExternalError::Query(e.to_string()))?;
-            Ok(row.map(|(id, subject, sender, date, body_html, body_text)| ExternalItem {
-                id,
-                subject,
-                sender,
-                date,
-                snippet: String::new(),
-                body_html,
-                body_text,
-            }))
+            let row: Option<(u32, Vec<u8>, Vec<u8>, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>)> =
+                conn.exec_first(&query, (id, system))
+                    .map_err(|e| ExternalError::Query(e.to_string()))?;
+            Ok(
+                row.map(|(id, subject, sender, date, body_html, body_text)| ExternalItem {
+                    id,
+                    subject: text(subject),
+                    sender: text(sender),
+                    date: text(date),
+                    snippet: String::new(),
+                    body_html: body_html.map(text),
+                    body_text: body_text.map(text),
+                }),
+            )
         })
         .await
         .map_err(|e| ExternalError::Query(e.to_string()))?
