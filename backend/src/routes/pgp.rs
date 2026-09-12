@@ -62,6 +62,12 @@ fn wkd_client() -> &'static reqwest::Client {
     })
 }
 
+/// Shared outbound HTTP client for operator/user-configured URLs: no redirects,
+/// short timeout, and a DNS resolver that rejects non-public IPs (SSRF guard).
+pub(crate) fn safe_outbound_client() -> &'static reqwest::Client {
+    wkd_client()
+}
+
 /// Returns true for IPs that must never be the target of an outbound WKD request.
 fn is_non_public_ip(ip: IpAddr) -> bool {
     match ip {

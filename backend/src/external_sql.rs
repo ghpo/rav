@@ -64,7 +64,7 @@ fn default_true() -> bool {
 /// - `list`:           params `(system, limit, offset)` → rows
 ///                     `(id, subject, sender, date, snippet)`
 /// - `detail`:         params `(id, system)` → row
-///                     `(id, subject, sender, date, body_html, body_text)`
+///                     `(id, subject, sender, date, body_html, body_text, image_ref)`
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExternalQueries {
     pub verify_account: String,
@@ -83,6 +83,8 @@ pub struct ExternalItem {
     pub snippet: String,
     pub body_html: Option<String>,
     pub body_text: Option<String>,
+    /// Optional image reference appended to the user's configured base URL.
+    pub image_ref: Option<String>,
 }
 
 /// A verified external account.
@@ -328,6 +330,7 @@ impl ExternalSqlClient for RealExternalSqlClient {
                     snippet: text(snippet),
                     body_html: None,
                     body_text: None,
+                    image_ref: None,
                 })
                 .collect())
         })
@@ -344,11 +347,19 @@ impl ExternalSqlClient for RealExternalSqlClient {
         let query = self.config.queries.detail.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = read_only_conn(&pool)?;
-            let row: Option<(u32, Vec<u8>, Vec<u8>, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>)> =
-                conn.exec_first(&query, (id, system))
-                    .map_err(|e| ExternalError::Query(e.to_string()))?;
+            let row: Option<(
+                u32,
+                Vec<u8>,
+                Vec<u8>,
+                Vec<u8>,
+                Option<Vec<u8>>,
+                Option<Vec<u8>>,
+                Option<Vec<u8>>,
+            )> = conn
+                .exec_first(&query, (id, system))
+                .map_err(|e| ExternalError::Query(e.to_string()))?;
             Ok(
-                row.map(|(id, subject, sender, date, body_html, body_text)| ExternalItem {
+                row.map(|(id, subject, sender, date, body_html, body_text, image_ref)| ExternalItem {
                     id,
                     subject: text(subject),
                     sender: text(sender),
@@ -356,6 +367,7 @@ impl ExternalSqlClient for RealExternalSqlClient {
                     snippet: String::new(),
                     body_html: body_html.map(text),
                     body_text: body_text.map(text),
+                    image_ref: image_ref.map(text),
                 }),
             )
         })

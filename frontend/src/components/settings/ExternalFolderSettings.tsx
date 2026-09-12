@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -16,8 +16,14 @@ export function ExternalFolderSettings() {
   const update = useUpdateExternalFolder();
   const [usuario, setUsuario] = useState("");
   const [senha, setSenha] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
 
   const folderName = data?.folder_name ?? "External";
+
+  useEffect(() => {
+    if (data) setBaseUrl(data.base_url ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.base_url]);
 
   const handleConnect = () => {
     if (!usuario.trim() || !senha) {
@@ -25,7 +31,11 @@ export function ExternalFolderSettings() {
       return;
     }
     connect.mutate(
-      { usuario: usuario.trim(), senha },
+      {
+        usuario: usuario.trim(),
+        senha,
+        base_url: baseUrl.trim() || null,
+      },
       {
         onSuccess: () => {
           setSenha("");
@@ -142,6 +152,24 @@ export function ExternalFolderSettings() {
                 onChange={(e) => setSenha(e.target.value)}
                 className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
+            </div>
+
+            <div>
+              <label htmlFor="external-base-url" className="text-sm font-medium">
+                URL base das imagens
+              </label>
+              <input
+                id="external-base-url"
+                type="url"
+                inputMode="url"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://exemplo.com/ARQUIVOS/THUMBS/"
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Opcional. O nome da imagem é anexado a esta URL para exibir a miniatura.
+              </p>
             </div>
 
             <Button

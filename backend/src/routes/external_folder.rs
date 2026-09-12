@@ -31,6 +31,7 @@ pub struct ExternalFolderStatus {
     pub connected: bool,
     pub system: Option<i64>,
     pub account_email: Option<String>,
+    pub base_url: Option<String>,
     pub connected_at: Option<String>,
     pub count: u64,
 }
@@ -39,6 +40,9 @@ pub struct ExternalFolderStatus {
 pub struct ConnectRequest {
     pub usuario: String,
     pub senha: String,
+    /// Optional image base URL (e.g. "https://host/THUMBS/").
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,9 +106,78 @@ async fn build_status(
         connected: settings.account_id.is_some(),
         system: settings.system.or(domain_system),
         account_email: settings.account_email,
+        base_url: settings.base_url,
         connected_at: settings.connected_at,
         count,
     })
+}
+
+/// Validate/normalize the optional image base URL. Keeps a trailing slash.
+fn normalize_base_url(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(value) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let parsed = url::Url::parse(value)
+        .map_err(|_| AppError::BadRequest("URL base inválida.".to_string()))?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(AppError::BadRequest(
+            "A URL base deve começar com http:// ou https://.".to_string(),
+        ));
+    }
+    let mut value = value.to_string();
+    if !value.ends_with('/') {
+        value.push('/');
+    }
+    Ok(Some(value))
+}
+
+/// Fetch an image and inline it as a data URI. Best-effort: any failure returns
+/// `None` so the detail still renders. Uses the no-redirect, SSRF-filtered
+/// client and a hard size cap.
+async fn fetch_image_data_uri(base_url: &str, image_ref: &str) -> Option<String> {
+    const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+
+    let url = format!("{}{}", base_url, image_ref.trim_start_matches('/'));
+    let parsed = url::Url::parse(&url).ok()?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return None;
+    }
+
+    let resp = crate::routes::pgp::safe_outbound_client()
+        .get(parsed)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    if let Some(len) = resp.content_length()
+        && len as usize > MAX_IMAGE_BYTES
+    {
+        return None;
+    }
+
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .filter(|ct| {
+            ct.starts_with("image/")
+                && ct
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '+' | '-' | '.'))
+        })
+        .unwrap_or("image/jpeg")
+        .to_string();
+
+    let bytes = resp.bytes().await.ok()?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return None;
+    }
+
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Some(format!("data:{content_type};base64,{b64}"))
 }
 
 /// `GET /api/settings/external-folder`
@@ -162,6 +235,8 @@ pub async fn connect_external_folder(
         return Err(external_error_to_app(ExternalError::SystemMismatch));
     }
 
+    let base_url = normalize_base_url(body.base_url.as_deref())?;
+
     let (enc_password, enc_nonce) = mfa_crypto
         .encrypt(body.senha.as_bytes())
         .map_err(AppError::InternalError)?;
@@ -176,6 +251,7 @@ pub async fn connect_external_folder(
             account_id,
             &email,
             verified_system,
+            base_url.as_deref(),
             &enc_password,
             &enc_nonce,
         )
@@ -249,15 +325,30 @@ fn item_to_detail(
     item: &ExternalItem,
     folder_name: &str,
     cipher: &FolderCipher,
+    image_uri: Option<String>,
 ) -> MessageDetailResponse {
-    let html = item.body_html.clone().or_else(|| {
-        item.body_text.as_ref().map(|text| {
-            format!(
-                "<pre style=\"white-space: pre-wrap; word-break: break-word; font-family: inherit;\">{}</pre>",
-                escape_html(text)
-            )
-        })
-    });
+    let mut html = String::new();
+
+    // Optional image, already inlined as a data URI by the caller.
+    if let Some(uri) = image_uri {
+        html.push_str("<div style=\"margin-bottom:12px;\"><img src=\"");
+        html.push_str(&uri);
+        html.push_str(
+            "\" alt=\"image\" style=\"max-width:100%;height:auto;border-radius:6px;\" /></div>",
+        );
+    }
+
+    match item.body_html.clone() {
+        Some(body) => html.push_str(&body),
+        None => {
+            if let Some(text) = item.body_text.as_ref() {
+                html.push_str(&format!(
+                    "<pre style=\"white-space: pre-wrap; word-break: break-word; font-family: inherit;\">{}</pre>",
+                    escape_html(text)
+                ));
+            }
+        }
+    }
 
     MessageDetailResponse {
         uid: item.id,
@@ -271,7 +362,7 @@ fn item_to_detail(
         date: item.date.clone(),
         flags: vec![],
         has_attachments: false,
-        html,
+        html: Some(html),
         text: item.body_text.clone().or_else(|| Some(item.snippet.clone())),
         raw_headers: String::new(),
         attachments: vec![],
@@ -343,7 +434,16 @@ pub(crate) async fn external_detail_response(
         .map_err(external_error_to_app)?
         .ok_or_else(|| AppError::NotFound(format!("Item {uid} não encontrado")))?;
 
-    Ok(item_to_detail(&item, client.folder_name(), cipher))
+    // Inline the item image (if configured) so it renders inside the sandboxed
+    // viewer without needing remote-resource permission.
+    let image_uri = match (settings.base_url.as_deref(), item.image_ref.as_deref()) {
+        (Some(base), Some(reference)) if !reference.trim().is_empty() => {
+            fetch_image_data_uri(base, reference).await
+        }
+        _ => None,
+    };
+
+    Ok(item_to_detail(&item, client.folder_name(), cipher, image_uri))
 }
 
 #[cfg(test)]
@@ -417,6 +517,7 @@ mod tests {
             snippet: "summary".to_string(),
             body_html: None,
             body_text: Some("body".to_string()),
+            image_ref: None,
         }
     }
 
@@ -435,7 +536,7 @@ mod tests {
         let cipher = FolderCipher::new(&[7u8; 32]);
         let mut item = sample_item();
         item.body_text = Some("<script>x</script>".to_string());
-        let detail = item_to_detail(&item, "Custom", &cipher);
+        let detail = item_to_detail(&item, "Custom", &cipher, None);
         let html = detail.html.unwrap();
         assert!(!html.contains("<script>"));
         assert!(html.contains("&lt;script&gt;"));

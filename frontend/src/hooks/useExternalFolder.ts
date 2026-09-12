@@ -15,6 +15,7 @@ export interface ExternalFolderStatus {
   connected: boolean;
   system: number | null;
   account_email: string | null;
+  base_url: string | null;
   connected_at: string | null;
   count: number;
 }
@@ -22,6 +23,7 @@ export interface ExternalFolderStatus {
 interface ConnectExternalFolderRequest {
   usuario: string;
   senha: string;
+  base_url?: string | null;
 }
 
 interface UpdateExternalFolderRequest {
