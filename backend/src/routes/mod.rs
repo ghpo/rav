@@ -18,6 +18,7 @@ pub mod link_proxy;
 pub mod messages;
 pub mod notification_preferences;
 pub mod outbox;
+pub mod external_folder;
 pub mod quota;
 pub mod search;
 pub mod pgp;
@@ -153,6 +154,7 @@ pub struct AppServices {
     pub link_proxy_secret: Option<Arc<LinkProxySecret>>,
     pub draft_locks: Arc<drafts::DraftLocks>,
     pub db_pool_manager: Arc<crate::db::pool::DbPoolManager>,
+    pub external_folder: crate::external_sql::SharedExternalClient,
 }
 
 /// Lets handlers take a single `AppServices` param instead of one `Extension<Arc<X>>`
@@ -199,6 +201,7 @@ where
                 .map(|Extension(v)| v),
             draft_locks: ext!(Arc<drafts::DraftLocks>),
             db_pool_manager: ext!(Arc<crate::db::pool::DbPoolManager>),
+            external_folder: ext!(crate::external_sql::SharedExternalClient),
         })
     }
 }
@@ -221,6 +224,7 @@ pub fn create_router(svc: AppServices) -> Router {
         link_proxy_secret,
         draft_locks,
         db_pool_manager,
+        external_folder,
     } = svc;
     let key_extractor = RealIpKeyExtractor {
         trusted: parse_trusted_proxies(&config.trusted_proxies),
@@ -418,6 +422,15 @@ pub fn create_router(svc: AppServices) -> Router {
                 .put(custom_nav_link::update_custom_nav_link),
         )
         .route(
+            "/settings/external-folder",
+            get(external_folder::get_external_folder_settings)
+                .put(external_folder::update_external_folder_settings),
+        )
+        .route(
+            "/settings/external-folder/connect",
+            post(external_folder::connect_external_folder),
+        )
+        .route(
             "/settings/notifications",
             get(notification_preferences::get_notification_preferences)
                 .put(notification_preferences::update_notification_preferences),
@@ -525,6 +538,7 @@ pub fn create_router(svc: AppServices) -> Router {
         .layer(Extension(passkey_service))
         .layer(Extension(draft_locks))
         .layer(Extension(db_pool_manager))
+        .layer(Extension(external_folder))
         .layer(Extension(config.clone()))
         .layer(TraceLayer::new_for_http());
 

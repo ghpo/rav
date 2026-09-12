@@ -17,6 +17,7 @@ services:
       - SESSION_TIMEOUT_HOURS=${SESSION_TIMEOUT_HOURS:-24}
       - WEBAUTHN_RP_ID=${WEBAUTHN_RP_ID:-}
       - WEBAUTHN_RP_ORIGIN=${WEBAUTHN_RP_ORIGIN:-}
+      - EXTERNAL_FOLDER_CONFIG=${EXTERNAL_FOLDER_CONFIG:-}
     volumes:
       - rav-data:/data
     healthcheck:

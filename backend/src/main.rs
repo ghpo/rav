@@ -10,6 +10,7 @@ mod imap;
 mod link_proxy;
 mod mail_transport;
 mod mfa;
+mod external_sql;
 mod sieve;
 mod smtp;
 mod auth;
@@ -139,6 +140,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build the passkey service (disabled when RP_ID / RP_ORIGIN are not set).
     let passkey_service = Arc::new(PasskeyService::from_config(&config)?);
 
+    // Optional external SQL-backed virtual folder (read-only).
+    let external_folder = external_sql::build_external_client(&config);
+
     // Spawn background task to purge stale pending ceremonies every 5 minutes.
     {
         let pk_svc = Arc::clone(&passkey_service);
@@ -169,6 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         link_proxy_secret,
         draft_locks: Arc::new(routes::drafts::DraftLocks::new()),
         db_pool_manager,
+        external_folder,
     });
 
     // Bind to the configured host and port.

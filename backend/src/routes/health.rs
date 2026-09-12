@@ -73,6 +73,7 @@ mod tests {
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            external_folder_config: None,
         });
         let store = Arc::new(SessionStore::new(Duration::from_secs(3600)));
         let transport = Arc::new(crate::mail_transport::MailTransport {
@@ -135,6 +136,7 @@ mod tests {
             passkey_service,
             link_proxy_secret: None,
             draft_locks: Arc::new(crate::routes::drafts::DraftLocks::new()),
+            external_folder: Arc::new(crate::external_sql::UnconfiguredExternalClient),
         });
 
         let response = app

@@ -30,6 +30,7 @@ import { useUiStore } from "@/stores/useUiStore";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useMessage, useUpdateFlags } from "@/hooks/useMessages";
+import { useIsExternalFolder } from "@/hooks/useExternalFolder";
 import { createFadeSlideVariants } from "@/lib/motion/variants";
 import { AnimatedDiv } from "@/lib/motion/AnimatedDiv";
 import { EmailRenderer, hasRemoteResources } from "./EmailRenderer";
@@ -299,6 +300,7 @@ export function ReadingPane() {
     selectedMessageUid ?? 0
   );
   const updateFlags = useUpdateFlags();
+  const isExternalFolder = useIsExternalFolder(activeFolder);
 
   // Mark a message as read once, when it is opened. This must stay in the
   // client (not the GET handler): the flag mutation invalidates the message
@@ -309,6 +311,8 @@ export function ReadingPane() {
   const markReadUidRef = useRef<number | null>(null);
   useEffect(() => {
     if (isMobile && mobilePanelView !== "reading") return;
+    // External (non-mail) folders have no read/unread state.
+    if (isExternalFolder) return;
     if (!data || data.uid !== selectedMessageUid) return;
     if (markReadUidRef.current === data.uid) return;
     markReadUidRef.current = data.uid;
@@ -319,7 +323,7 @@ export function ReadingPane() {
       flags: ["\\Seen"],
       add: true,
     });
-  }, [data, selectedMessageUid, isMobile, mobilePanelView, updateFlags]);
+  }, [data, selectedMessageUid, isMobile, mobilePanelView, updateFlags, isExternalFolder]);
 
   const paneVariants = useMemo(() => createFadeSlideVariants(effectiveAnimationMode, "x"), [effectiveAnimationMode]);
   const emailTheme = emailThemeState.uid === data?.uid ? emailThemeState.theme : "auto";

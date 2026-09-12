@@ -15,9 +15,11 @@ import { VacationSettings } from "./VacationSettings";
 import { FiltersSettings } from "./FiltersSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { PgpSettings } from "./PgpSettings";
+import { ExternalFolderSettings } from "./ExternalFolderSettings";
 import { useServerCapability } from "@/hooks/usePgp";
+import { useExternalFolderSettings } from "@/hooks/useExternalFolder";
 
-type Tab = "display" | "notifications" | "identities" | "vacation" | "filters" | "security" | "pgp";
+type Tab = "display" | "notifications" | "identities" | "vacation" | "filters" | "security" | "pgp" | "external";
 
 const BASE_TABS: { id: Tab; label: string }[] = [
   { id: "display", label: "Display" },
@@ -33,7 +35,12 @@ export function SettingsPanel() {
   const effectiveAnimationMode = useUiStore((s) => s.effectiveAnimationMode);
   const [activeTab, setActiveTab] = useState<Tab>("display");
   const pgpEnabled = useServerCapability("pgp");
-  const TABS = pgpEnabled ? [...BASE_TABS, { id: "pgp" as Tab, label: "PGP Keys" }] : BASE_TABS;
+  const external = useExternalFolderSettings();
+  const TABS: { id: Tab; label: string }[] = [...BASE_TABS];
+  if (pgpEnabled) TABS.push({ id: "pgp", label: "PGP Keys" });
+  if (external.data?.configured) {
+    TABS.push({ id: "external", label: external.data.folder_name || "External" });
+  }
 
   const shouldAnimate = effectiveAnimationMode !== "off";
   const tokens = getMotionTokens(effectiveAnimationMode);
@@ -100,6 +107,7 @@ export function SettingsPanel() {
             {activeTab === "filters" && <FiltersSettings />}
             {activeTab === "security" && <SecuritySettings />}
             {activeTab === "pgp" && <PgpSettings />}
+            {activeTab === "external" && <ExternalFolderSettings />}
           </AnimatedDiv>
         </AnimatePresence>
       </div>

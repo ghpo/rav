@@ -11,6 +11,7 @@ import { SearchResults } from "@/components/mail/SearchResults";
 import { MessageActionBar } from "@/components/mail/MessageActionBar";
 import { isValidCommittedSearch } from "@/lib/search-parser";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useIsExternalFolder } from "@/hooks/useExternalFolder";
 import { MobileHeader } from "@/components/shared/MobileHeader";
 
 interface ThreePanelLayoutProps {
@@ -91,6 +92,8 @@ export function ThreePanelLayout({
   const setSidebarWidth = useUiStore((s) => s.setSidebarWidth);
   const setMessageListWidth = useUiStore((s) => s.setMessageListWidth);
   const selectedMessageUid = useUiStore((s) => s.selectedMessageUid);
+  const activeFolder = useUiStore((s) => s.activeFolder);
+  const isExternalFolder = useIsExternalFolder(activeFolder);
   const searchActive = useUiStore((s) => s.searchActive);
   const searchQuery = useUiStore((s) => s.searchQuery);
   const effectiveAnimationMode = useUiStore((s) => s.effectiveAnimationMode);
@@ -284,7 +287,7 @@ export function ThreePanelLayout({
           >
             <ResizeHandle onDrag={handleMessageListDrag} />
             <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <MessageActionBar />
+              {!isExternalFolder && <MessageActionBar />}
               {selectedMessageUid !== null ? (
                 <div className="flex min-h-0 flex-1">{readingPane}</div>
               ) : (

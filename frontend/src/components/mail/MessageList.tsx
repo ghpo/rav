@@ -17,6 +17,7 @@ import { useComposeStore } from "@/stores/useComposeStore";
 import { MessageListItem } from "./MessageListItem";
 import { formatFolderName } from "./FolderTree";
 import { BulkActionBar } from "./BulkActionBar";
+import { useIsExternalFolder } from "@/hooks/useExternalFolder";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -85,6 +86,7 @@ function ToggleReadingPaneButton() {
 
 export function MessageList() {
   const activeFolder = useUiStore((s) => s.activeFolder);
+  const isExternalFolder = useIsExternalFolder(activeFolder);
   const activeTagId = useUiStore((s) => s.activeTagId);
   const density = useUiStore((s) => s.density);
   const selectedMessageUid = useUiStore((s) => s.selectedMessageUid);
@@ -411,8 +413,8 @@ export function MessageList() {
         </div>
       </div>
 
-      {/* Bulk action bar */}
-      <BulkActionBar />
+      {/* Bulk action bar (not applicable to external/virtual folders) */}
+      {!isExternalFolder && <BulkActionBar />}
 
       {/* Non-blocking refetch indicator */}
       <div className="relative h-0">
@@ -527,11 +529,12 @@ export function MessageList() {
                           handleClick(message.uid, e);
                         }
                       }}
-                      bulkSelectMode={bulkSelectMode}
+                      bulkSelectMode={bulkSelectMode && !isExternalFolder}
                       isBulkSelected={selectedMessageUids.includes(message.uid)}
                       onBulkToggle={toggleBulkSelect}
                       suppressHover={keyboardNav}
                       effectiveAnimationMode={effectiveAnimationMode}
+                      readOnly={isExternalFolder}
                     />
                   </AnimatedDiv>
                 );

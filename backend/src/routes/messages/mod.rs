@@ -171,9 +171,25 @@ pub async fn list_messages(
         event_bus,
         sync_worker_manager,
         db_pool_manager,
+        external_folder,
         ..
     } = services;
     let folder = cipher_for(&session).decrypt(&folder_id)?;
+
+    // Optional external virtual folder: list its items instead of IMAP messages.
+    if external_folder.is_configured() && folder == external_folder.folder_name() {
+        let resp = crate::routes::external_folder::external_list_response(
+            &external_folder,
+            &db_pool_manager,
+            &session.user_hash,
+            query.page,
+            query.per_page,
+            &cipher_for(&session),
+        )
+        .await?;
+        return Ok(Json(resp).into_response());
+    }
+
     let mut syncing = false;
 
     // Check the cache and, if the folder isn't fresh, gather what we need to
@@ -663,6 +679,7 @@ pub async fn get_message_by_message_id(
     imap_client: Extension<Arc<dyn ImapClient>>,
     search_engine: Extension<Arc<SearchEngine>>,
     db_pool_manager: Extension<Arc<db::pool::DbPoolManager>>,
+    external_folder: Extension<crate::external_sql::SharedExternalClient>,
     link_proxy: Option<Extension<Arc<crate::link_proxy::LinkProxySecret>>>,
     Json(body): Json<ByMessageIdRequest>,
 ) -> Result<Response, AppError> {
@@ -676,7 +693,7 @@ pub async fn get_message_by_message_id(
 
     // Encrypt the folder so get_message can decrypt it cleanly through the normal path.
     let encrypted_folder = cipher_for(&session).encrypt(&folder);
-    get_message(session, config, imap_client, search_engine, db_pool_manager, link_proxy, Path((encrypted_folder, uid))).await
+    get_message(session, config, imap_client, search_engine, db_pool_manager, external_folder, link_proxy, Path((encrypted_folder, uid))).await
 }
 
 /// `GET /api/messages/:folder/:uid`
@@ -689,10 +706,25 @@ pub async fn get_message(
     Extension(imap_client): Extension<Arc<dyn ImapClient>>,
     Extension(search_engine): Extension<Arc<SearchEngine>>,
     Extension(db_pool_manager): Extension<Arc<db::pool::DbPoolManager>>,
+    Extension(external_folder): Extension<crate::external_sql::SharedExternalClient>,
     link_proxy: Option<Extension<Arc<crate::link_proxy::LinkProxySecret>>>,
     Path((folder_id, uid)): Path<(FolderId, u32)>,
 ) -> Result<Response, AppError> {
     let folder = cipher_for(&session).decrypt(&folder_id)?;
+
+    // Optional external virtual folder: return the item as a synthetic message.
+    if external_folder.is_configured() && folder == external_folder.folder_name() {
+        let resp = crate::routes::external_folder::external_detail_response(
+            &external_folder,
+            &db_pool_manager,
+            &session.user_hash,
+            uid,
+            &cipher_for(&session),
+        )
+        .await?;
+        return Ok(Json(resp).into_response());
+    }
+
     let creds = build_creds(&session, &config)?;
 
     // Check SQLite cache first. If it's usable, resolve fully here (sync-only,

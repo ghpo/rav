@@ -139,6 +139,13 @@ pub struct AppConfig {
     /// When exceeded, the least-recently-used pool is evicted to make room.
     #[serde(default = "default_db_pool_max_users")]
     pub db_pool_max_users: usize,
+
+    /// Path to the private JSON config for the optional external SQL folder
+    /// (connection, queries, domain mapping and folder name). When unset or
+    /// the file is missing, the feature is disabled. Defaults to
+    /// `{data_dir}/external-folder.json`.
+    #[serde(default)]
+    pub external_folder_config: Option<String>,
 }
 
 fn default_pgp_enabled() -> bool {

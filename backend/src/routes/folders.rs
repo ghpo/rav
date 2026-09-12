@@ -53,6 +53,7 @@ pub async fn list_folders(
     Extension(config): Extension<Arc<AppConfig>>,
     Extension(imap_client): Extension<Arc<dyn ImapClient>>,
     Extension(db_pool_manager): Extension<Arc<db::pool::DbPoolManager>>,
+    Extension(external_folder): Extension<crate::external_sql::SharedExternalClient>,
 ) -> Result<Response, AppError> {
     // If the folder cache was updated recently, skip the IMAP round-trip.
     let cache_fresh = db::pool::with_user_db(&db_pool_manager, &session.user_hash, |conn| {
@@ -151,7 +152,7 @@ pub async fn list_folders(
 
     let cipher = crate::folder_cipher::FolderCipher::new(&session.folder_key);
 
-    let folders: Vec<FolderEntry> = cached
+    let mut folders: Vec<FolderEntry> = cached
         .into_iter()
         .zip(folder_previews)
         .map(|(f, (_, previews))| {
@@ -199,6 +200,37 @@ pub async fn list_folders(
             }
         })
         .collect();
+
+    // Optional external virtual folder for connected users (looks like just
+    // another folder; the messages handlers intercept it and query the data
+    // source configured privately outside the repository).
+    let external_settings = db::pool::with_user_db(&db_pool_manager, &session.user_hash, |conn| {
+        db::external_folder::get_settings(conn)
+    })
+    .await
+    .map_err(|e| AppError::InternalError(format!("Database error: {e}")))?;
+
+    if external_folder.is_configured()
+        && external_settings.enabled
+        && external_settings.account_id.is_some()
+        && let Some(system) = external_settings.system
+        && external_folder.system_for_email(&session.email).is_some()
+    {
+        let count = external_folder.count(system).await.unwrap_or(0) as u32;
+        let name = external_folder.folder_name().to_string();
+        if !name.is_empty() {
+            folders.push(FolderEntry {
+                id: cipher.encrypt(&name),
+                name,
+                delimiter: None,
+                attributes: vec![crate::routes::external_folder::EXTERNAL_ATTR.to_string()],
+                is_subscribed: true,
+                total_count: count,
+                unread_count: count,
+                recent_messages: vec![],
+            });
+        }
+    }
 
     Ok(Json(FoldersResponse { folders }).into_response())
 }

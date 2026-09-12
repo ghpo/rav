@@ -36,6 +36,8 @@ interface MessageListItemProps {
   onBulkToggle: (uid: number) => void;
   suppressHover?: boolean;
   effectiveAnimationMode: AnimationMode;
+  /** External/virtual folders have no read/star actions. */
+  readOnly?: boolean;
 }
 
 function formatDate(dateStr: string): string {
@@ -102,6 +104,7 @@ export const MessageListItem = memo(function MessageListItem({
   onBulkToggle,
   suppressHover,
   effectiveAnimationMode,
+  readOnly = false,
 }: MessageListItemProps) {
   const isUnread = message.unread_count > 0;
   const isFlagged = message.flags.includes("\\Flagged");
@@ -112,6 +115,7 @@ export const MessageListItem = memo(function MessageListItem({
 
   const toggleStar = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (readOnly) return;
     updateFlags.mutate({
       folder: message.folder_name,
       uid: message.uid,
@@ -122,6 +126,7 @@ export const MessageListItem = memo(function MessageListItem({
 
   const toggleRead = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (readOnly) return;
     updateFlags.mutate({
       folder: message.folder_name,
       uid: message.uid,
@@ -205,7 +210,7 @@ export const MessageListItem = memo(function MessageListItem({
             type="button"
             aria-label={isUnread ? "Mark as read" : "Mark as unread"}
             onClick={toggleRead}
-            className="flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-muted-foreground/20"
+            className={cn("flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-muted-foreground/20", readOnly && "hidden")}
           >
             <span
               className={cn(
@@ -221,7 +226,7 @@ export const MessageListItem = memo(function MessageListItem({
           type="button"
           aria-label={isFlagged ? "Unstar" : "Star"}
           onClick={toggleStar}
-          className="flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted-foreground/20"
+          className={cn("flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted-foreground/20", readOnly && "hidden")}
         >
           {isFlagged ? (
             <Star className="size-3.5 fill-primary text-primary" />
@@ -324,7 +329,7 @@ export const MessageListItem = memo(function MessageListItem({
           type="button"
           aria-label={isFlagged ? "Unstar" : "Star"}
           onClick={toggleStar}
-          className="flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted-foreground/20"
+          className={cn("flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted-foreground/20", readOnly && "hidden")}
         >
           {isFlagged ? (
             <Star className="size-3.5 fill-primary text-primary" />
@@ -360,7 +365,7 @@ export const MessageListItem = memo(function MessageListItem({
             type="button"
             aria-label={isUnread ? "Mark as read" : "Mark as unread"}
             onClick={toggleRead}
-            className="flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-muted-foreground/20"
+            className={cn("flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-muted-foreground/20", readOnly && "hidden")}
           >
             <span
               className={cn(

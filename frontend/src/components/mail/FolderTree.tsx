@@ -9,6 +9,7 @@ import {
   AlertCircle,
   Star,
   Folder,
+  Package,
   Loader2,
   FolderPlus,
   Check,
@@ -67,6 +68,8 @@ function folderSortOrder(folder: FolderType, displayName: string): number {
   if (attrs.includes("\\sent")) return 2;
   if (attrs.includes("\\junk")) return 3;
   if (attrs.includes("\\trash")) return 4;
+  // External (config-driven) folders sort right below Trash.
+  if (attrs.includes("\\external")) return 4.5;
   if (attrs.includes("\\archive") || attrs.includes("\\all")) return 5;
   // Name-based fallback for servers that don't set special-use attributes.
   const lower = displayName.toLowerCase();
@@ -157,7 +160,10 @@ function buildFolderTree(folders: FolderType[]): TreeNode[] {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function getFolderIcon(name: string) {
+function getFolderIcon(name: string, attributes: string[] = []) {
+  if (attributes.some((a) => a.toLowerCase() === "\\external")) {
+    return <Package className="size-4 shrink-0" />;
+  }
   const lower = name.toLowerCase();
   if (lower === "inbox") return <Inbox className="size-4 shrink-0" />;
   if (lower === "sent" || lower.includes("sent")) return <Send className="size-4 shrink-0" />;
@@ -326,6 +332,9 @@ function FolderItem({
   const isNoSelect = folder.attributes.some(
     (a) => a.toLowerCase() === "\\noselect",
   );
+  const isExternal = folder.attributes.some(
+    (a) => a.toLowerCase() === "\\external",
+  );
 
   // Left indent: 8px base + 8px per additional depth level.
   // The chevron/spacer (24px wide) sits after this indent before the icon.
@@ -389,7 +398,7 @@ function FolderItem({
       >
         {/* Same-width spacer as the chevron so the icon aligns with the normal state. */}
         <span className="size-6 shrink-0" aria-hidden />
-        {getFolderIcon(folder.name)}
+        {getFolderIcon(folder.name, folder.attributes)}
         <InlineRenameInput
           currentName={folder.name}
           displayName={displayName}
@@ -450,7 +459,7 @@ function FolderItem({
               : "font-medium text-sidebar-foreground",
         )}
       >
-        {getFolderIcon(folder.name)}
+        {getFolderIcon(folder.name, folder.attributes)}
         <span className="flex-1 truncate text-left">
           {/*
            * Use formatFolderName on the full IMAP name first — this handles nested
@@ -475,7 +484,7 @@ function FolderItem({
           <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
         ) : null}
       </button>
-      {!isNoSelect && (
+      {!isNoSelect && !isExternal && (
         <FolderRowMenu
           folder={folder}
           onOpen={(pos) => openMenuRef.current?.(pos)}
@@ -484,8 +493,8 @@ function FolderItem({
     </div>
   );
 
-  // \Noselect folders cannot receive drag-drops and have no context menu.
-  if (isNoSelect) return row;
+  // \Noselect and external folders cannot be renamed/moved or receive drops.
+  if (isNoSelect || isExternal) return row;
 
   return (
     <FolderContextMenu

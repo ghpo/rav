@@ -47,6 +47,7 @@
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            external_folder_config: None,
         })
     }
 
@@ -80,6 +81,7 @@
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            external_folder_config: None,
         })
     }
 
@@ -113,6 +115,7 @@
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            external_folder_config: None,
         })
     }
 
@@ -224,6 +227,7 @@
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            external_folder_config: None,
         }).expect("test PasskeyService with WebAuthn"))
     }
 
@@ -257,6 +261,7 @@
             db_pool_max_connections_per_user: 4,
             db_pool_idle_timeout_secs: 600,
             db_pool_max_users: 500,
+            external_folder_config: None,
         }).expect("test PasskeyService"))
     }
 
@@ -301,6 +306,7 @@
             link_proxy_secret: None,
             draft_locks: Arc::new(crate::routes::drafts::DraftLocks::new()),
             db_pool_manager,
+            external_folder: Arc::new(crate::external_sql::UnconfiguredExternalClient),
         }
     }
 
