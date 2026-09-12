@@ -100,6 +100,27 @@ pub fn set_enabled(conn: &Connection, enabled: bool) -> Result<ExternalFolderSet
     get_settings(conn)
 }
 
+/// Update only the image base URL.
+pub fn set_base_url(
+    conn: &Connection,
+    base_url: Option<&str>,
+) -> Result<ExternalFolderSettings, String> {
+    conn.execute(
+        "INSERT OR IGNORE INTO external_folder_settings (id) VALUES (1)",
+        [],
+    )
+    .map_err(|e| format!("Failed to ensure external folder settings row: {e}"))?;
+    conn.execute(
+        "UPDATE external_folder_settings
+         SET base_url = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+         WHERE id = 1",
+        rusqlite::params![base_url],
+    )
+    .map_err(|e| format!("Failed to update external folder base url: {e}"))?;
+
+    get_settings(conn)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

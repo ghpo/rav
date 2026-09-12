@@ -27,7 +27,8 @@ interface ConnectExternalFolderRequest {
 }
 
 interface UpdateExternalFolderRequest {
-  enabled: boolean;
+  enabled?: boolean;
+  base_url?: string | null;
 }
 
 export function useExternalFolderSettings() {

@@ -47,7 +47,11 @@ pub struct ConnectRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateExternalFolderRequest {
-    pub enabled: bool,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// When present, replaces the stored image base URL (empty clears it).
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 fn external_error_to_app(err: ExternalError) -> AppError {
@@ -277,15 +281,25 @@ pub async fn update_external_folder_settings(
     } = services;
 
     let current = read_settings(&db_pool_manager, &session.user_hash).await?;
-    if body.enabled && current.account_id.is_none() {
+    if body.enabled == Some(true) && current.account_id.is_none() {
         return Err(AppError::BadRequest(
             "Conecte uma conta antes de ativar.".to_string(),
         ));
     }
 
+    let enabled = body.enabled;
+    let has_base_url = body.base_url.is_some();
+    let base_url = normalize_base_url(body.base_url.as_deref())?;
+
     let user_hash = session.user_hash.clone();
     db::pool::with_user_db(&db_pool_manager, &user_hash, move |conn| {
-        db::external_folder::set_enabled(conn, body.enabled)
+        if let Some(enabled) = enabled {
+            db::external_folder::set_enabled(conn, enabled)?;
+        }
+        if has_base_url {
+            db::external_folder::set_base_url(conn, base_url.as_deref())?;
+        }
+        Ok(())
     })
     .await
     .map_err(AppError::InternalError)?;

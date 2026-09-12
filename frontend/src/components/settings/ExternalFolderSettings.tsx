@@ -53,6 +53,16 @@ export function ExternalFolderSettings() {
     );
   };
 
+  const handleSaveBaseUrl = () => {
+    update.mutate(
+      { base_url: baseUrl.trim() || null },
+      {
+        onSuccess: () => toast.success("URL base salva."),
+        onError: (e) => toast.error(e.message),
+      },
+    );
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -170,6 +180,19 @@ export function ExternalFolderSettings() {
               <p className="mt-1 text-xs text-muted-foreground">
                 Opcional. O nome da imagem é anexado a esta URL para exibir a miniatura.
               </p>
+              {data.connected && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={handleSaveBaseUrl}
+                  disabled={update.isPending}
+                >
+                  {update.isPending && <Loader2 className="size-4 animate-spin" />}
+                  Salvar URL
+                </Button>
+              )}
             </div>
 
             <Button
