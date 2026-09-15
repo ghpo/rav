@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { useUiStore } from "@/stores/useUiStore";
 import {
   useMessage,
@@ -24,6 +25,7 @@ import {
   useMoveMessage,
   useDeleteMessage,
 } from "@/hooks/useMessages";
+import { resolveSpecialFolderName } from "@/lib/folders";
 import { MoveToFolderMenu } from "./MoveToFolderMenu";
 import { TagPicker } from "./TagPicker";
 import { Button } from "@/components/ui/button";
@@ -79,6 +81,7 @@ export function MessageActionBar() {
   const deleteMessage = useDeleteMessage();
   const reportSpam = useReportSpam();
   const reportHam = useReportHam();
+  const queryClient = useQueryClient();
 
   const { data } = useMessage(activeFolder, selectedMessageUid ?? 0);
   const { data: identities } = useIdentities();
@@ -219,12 +222,15 @@ export function MessageActionBar() {
 
   const handleDelete = () => {
     if (!data) return;
-    setActionFeedback("delete");
-    const isPermanent = activeFolder === "Trash";
+    const trashName =
+      resolveSpecialFolderName(queryClient, ["Trash"], "\\trash") ?? "Trash";
+    const isPermanent = activeFolder === trashName;
     const label = isPermanent ? "Permanently deleted" : "Moved to trash";
     const uid = data.uid;
     const folder = activeFolder;
     let cancelled = false;
+
+    setActionFeedback("delete");
 
     toast(label, {
       duration: 5000,
@@ -239,12 +245,18 @@ export function MessageActionBar() {
       if (isPermanent) {
         deleteMessage.mutate(
           { folder, uid },
-          { onSettled: () => setActionFeedback(null) },
+          {
+            onError: (e) => toast.error(`Falha ao excluir: ${e.message}`),
+            onSettled: () => setActionFeedback(null),
+          },
         );
       } else {
         moveMessage.mutate(
-          { fromFolder: folder, toFolder: "Trash", uid },
-          { onSettled: () => setActionFeedback(null) },
+          { fromFolder: folder, toFolder: trashName, uid },
+          {
+            onError: (e) => toast.error(`Falha ao mover para a lixeira: ${e.message}`),
+            onSettled: () => setActionFeedback(null),
+          },
         );
       }
     }, 5000);
@@ -252,10 +264,16 @@ export function MessageActionBar() {
 
   const handleArchive = () => {
     if (!data) return;
-    setActionFeedback("archive");
+    const archiveName = resolveSpecialFolderName(queryClient, ["Archive"], "\\archive");
+    if (!archiveName) {
+      toast.error("Pasta de arquivamento não encontrada.");
+      return;
+    }
     const uid = data.uid;
     const folder = activeFolder;
     let cancelled = false;
+
+    setActionFeedback("archive");
 
     toast("Archived", {
       duration: 5000,
@@ -268,8 +286,11 @@ export function MessageActionBar() {
     setTimeout(() => {
       if (cancelled) return;
       moveMessage.mutate(
-        { fromFolder: folder, toFolder: "Archive", uid },
-        { onSettled: () => setActionFeedback(null) },
+        { fromFolder: folder, toFolder: archiveName, uid },
+        {
+          onError: (e) => toast.error(`Falha ao arquivar: ${e.message}`),
+          onSettled: () => setActionFeedback(null),
+        },
       );
     }, 5000);
   };
@@ -278,8 +299,13 @@ export function MessageActionBar() {
     if (!data) return;
     const uid = data.uid;
     const folder = activeFolder;
+    const junkName =
+      resolveSpecialFolderName(queryClient, ["Junk", "Spam"], "\\junk") ?? "Junk";
     reportSpam.mutate({ folder, uid });
-    moveMessage.mutate({ fromFolder: folder, toFolder: "Spam", uid });
+    moveMessage.mutate(
+      { fromFolder: folder, toFolder: junkName, uid },
+      { onError: (e) => toast.error(`Falha ao mover para spam: ${e.message}`) },
+    );
   };
 
   const handleNotJunk = () => {

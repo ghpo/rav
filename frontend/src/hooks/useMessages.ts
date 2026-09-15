@@ -203,6 +203,7 @@ export function useMoveMessage() {
       queryClient.invalidateQueries({ queryKey: ["messages", fromFolder] });
       queryClient.invalidateQueries({ queryKey: ["messages", toFolder] });
       queryClient.invalidateQueries({ queryKey: ["folders"] });
+      queryClient.invalidateQueries({ queryKey: ["search"] });
     },
   });
 }
@@ -255,6 +256,7 @@ export function useDeleteMessage() {
     onSettled: (_, _err, { folder }) => {
       queryClient.invalidateQueries({ queryKey: ["messages", folder] });
       queryClient.invalidateQueries({ queryKey: ["folders"] });
+      queryClient.invalidateQueries({ queryKey: ["search"] });
     },
   });
 }
@@ -308,6 +310,7 @@ export function useBulkMoveMessages() {
       queryClient.invalidateQueries({ queryKey: ["messages", fromFolder] });
       queryClient.invalidateQueries({ queryKey: ["messages", toFolder] });
       queryClient.invalidateQueries({ queryKey: ["folders"] });
+      queryClient.invalidateQueries({ queryKey: ["search"] });
     },
   });
 }
@@ -323,6 +326,7 @@ export function useBulkDeleteMessages() {
     onSettled: (_data, _err, { folder }) => {
       queryClient.invalidateQueries({ queryKey: ["messages", folder] });
       queryClient.invalidateQueries({ queryKey: ["folders"] });
+      queryClient.invalidateQueries({ queryKey: ["search"] });
     },
   });
 }

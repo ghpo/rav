@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useCallback, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useUiStore } from "@/stores/useUiStore";
 import {
   useUpdateFlags,
@@ -9,6 +10,7 @@ import {
   useMessages,
   useMessage,
 } from "@/hooks/useMessages";
+import { resolveSpecialFolderName } from "@/lib/folders";
 import { useSearch } from "@/hooks/useSearch";
 import {
   isValidCommittedSearch,
@@ -51,6 +53,7 @@ export function useKeyboardShortcuts() {
   const updateFlags = useUpdateFlags();
   const moveMessage = useMoveMessage();
   const deleteMessage = useDeleteMessage();
+  const queryClient = useQueryClient();
   const { data } = useMessages(activeFolder);
   const { data: messageData } = useMessage(activeFolder, selectedMessageUid ?? 0);
   const { data: identities } = useIdentities();
@@ -250,31 +253,39 @@ export function useKeyboardShortcuts() {
           break;
 
         case "e":
-          if (activeFolder !== "Archive") {
-            e.preventDefault();
-            moveMessage.mutate({
-              fromFolder: activeFolder,
-              toFolder: "Archive",
-              uid: selectedMessageUid,
-            });
+          {
+            const archiveName =
+              resolveSpecialFolderName(queryClient, ["Archive"], "\\archive");
+            if (archiveName && activeFolder !== archiveName) {
+              e.preventDefault();
+              moveMessage.mutate({
+                fromFolder: activeFolder,
+                toFolder: archiveName,
+                uid: selectedMessageUid,
+              });
+            }
           }
           break;
 
         case "Delete":
         case "Backspace":
           e.preventDefault();
-          if (activeFolder === "Trash") {
-            deleteMessage.mutate(
-              { folder: activeFolder, uid: selectedMessageUid },
-            );
-          } else {
-            moveMessage.mutate(
-              {
-                fromFolder: activeFolder,
-                toFolder: "Trash",
-                uid: selectedMessageUid,
-              },
-            );
+          {
+            const trashName =
+              resolveSpecialFolderName(queryClient, ["Trash"], "\\trash") ?? "Trash";
+            if (activeFolder === trashName) {
+              deleteMessage.mutate(
+                { folder: activeFolder, uid: selectedMessageUid },
+              );
+            } else {
+              moveMessage.mutate(
+                {
+                  fromFolder: activeFolder,
+                  toFolder: trashName,
+                  uid: selectedMessageUid,
+                },
+              );
+            }
           }
           break;
 
@@ -361,6 +372,7 @@ export function useKeyboardShortcuts() {
     updateFlags,
     moveMessage,
     deleteMessage,
+    queryClient,
     folderMessages,
     hasActiveSearch,
     searchResults,

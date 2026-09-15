@@ -1200,30 +1200,33 @@ pub async fn move_message_handler(
     Extension(config): Extension<Arc<AppConfig>>,
     Extension(imap_client): Extension<Arc<dyn ImapClient>>,
     Extension(db_pool_manager): Extension<Arc<db::pool::DbPoolManager>>,
+    Extension(search_engine): Extension<Arc<SearchEngine>>,
     Json(body): Json<MoveMessageRequest>,
 ) -> Result<Response, AppError> {
     let cipher = cipher_for(&session);
     let from_folder = cipher.decrypt(&body.from_folder)?;
     let to_folder = cipher.decrypt(&body.to_folder)?;
     let creds = build_creds(&session, &config)?;
+    let uid = body.uid;
+    let from_for_index = from_folder.clone();
 
     // Move on IMAP server.
     imap_client
-        .move_message(&creds, &from_folder, body.uid, &to_folder)
+        .move_message(&creds, &from_folder, uid, &to_folder)
         .await
         .map_err(|e| AppError::ServiceUnavailable(format!("IMAP error: {e}")))?;
 
     db::pool::with_user_db(&db_pool_manager, &session.user_hash, move |conn| {
         // Check if the message was unread before removing it from the source
         // cache, so we can adjust the destination folder's unread count.
-        let was_unread = db::messages::get_single_message(conn, &from_folder, body.uid)?
+        let was_unread = db::messages::get_single_message(conn, &from_folder, uid)?
             .map(|m| !m.flags.contains("\\Seen"))
             .unwrap_or(false);
 
         // Delete from source folder cache. We don't keep the row in the
         // destination because the UID changes after an IMAP MOVE, and a
         // stale UID would cause 404s when trying to fetch the message body.
-        db::messages::delete_message(conn, &from_folder, body.uid)?;
+        db::messages::delete_message(conn, &from_folder, uid)?;
 
         // Refresh source folder unread count (now accurate since the row is gone).
         db::folders::refresh_unread_count(conn, &from_folder)?;
@@ -1242,6 +1245,12 @@ pub async fn move_message_handler(
     .await
     .map_err(|e| AppError::InternalError(format!("Database error: {e}")))?;
 
+    // Drop the moved message from the full-text index so it does not linger in
+    // search results (its new UID in the destination is re-indexed on sync).
+    if let Ok(index) = search_engine.open_user_index(&session.user_hash) {
+        let _ = index.delete_message(uid, &from_for_index);
+    }
+
     Ok(Json(serde_json::json!({ "status": "ok" })).into_response())
 }
 
@@ -1254,6 +1263,7 @@ pub async fn bulk_move_messages(
     Extension(config): Extension<Arc<AppConfig>>,
     Extension(imap_client): Extension<Arc<dyn ImapClient>>,
     Extension(db_pool_manager): Extension<Arc<db::pool::DbPoolManager>>,
+    Extension(search_engine): Extension<Arc<SearchEngine>>,
     Json(body): Json<BulkMoveMessagesRequest>,
 ) -> Result<Response, AppError> {
     let cipher = cipher_for(&session);
@@ -1265,6 +1275,7 @@ pub async fn bulk_move_messages(
     }
 
     let creds = build_creds(&session, &config)?;
+    let from_for_index = from_folder.clone();
 
     // Move on IMAP server. IMAP UID commands silently skip UIDs that don't
     // exist in the mailbox, so it's safe to send the full (possibly-bogus)
@@ -1317,6 +1328,12 @@ pub async fn bulk_move_messages(
     })
     .await
     .map_err(|e| AppError::InternalError(format!("Database error: {e}")))?;
+
+    if let Ok(index) = search_engine.open_user_index(&session.user_hash) {
+        for uid in &body.uids {
+            let _ = index.delete_message(*uid, &from_for_index);
+        }
+    }
 
     Ok(Json(BulkMessageOpResponse { failed_uids }).into_response())
 }
@@ -1408,10 +1425,12 @@ pub async fn delete_message_handler(
     Extension(config): Extension<Arc<AppConfig>>,
     Extension(imap_client): Extension<Arc<dyn ImapClient>>,
     Extension(db_pool_manager): Extension<Arc<db::pool::DbPoolManager>>,
+    Extension(search_engine): Extension<Arc<SearchEngine>>,
     Path((folder_id, uid)): Path<(FolderId, u32)>,
 ) -> Result<Response, AppError> {
     let folder = cipher_for(&session).decrypt(&folder_id)?;
     let creds = build_creds(&session, &config)?;
+    let folder_for_index = folder.clone();
 
     // Expunge on IMAP server.
     imap_client
@@ -1429,6 +1448,10 @@ pub async fn delete_message_handler(
     .await
     .map_err(|e| AppError::InternalError(format!("Database error: {e}")))?;
 
+    if let Ok(index) = search_engine.open_user_index(&session.user_hash) {
+        let _ = index.delete_message(uid, &folder_for_index);
+    }
+
     Ok(Json(serde_json::json!({ "status": "ok" })).into_response())
 }
 
@@ -1442,10 +1465,12 @@ pub async fn bulk_delete_messages(
     Extension(config): Extension<Arc<AppConfig>>,
     Extension(imap_client): Extension<Arc<dyn ImapClient>>,
     Extension(db_pool_manager): Extension<Arc<db::pool::DbPoolManager>>,
+    Extension(search_engine): Extension<Arc<SearchEngine>>,
     Path(folder_id): Path<FolderId>,
     Json(body): Json<BulkDeleteMessagesRequest>,
 ) -> Result<Response, AppError> {
     let folder = cipher_for(&session).decrypt(&folder_id)?;
+    let folder_for_index = folder.clone();
 
     if body.uids.is_empty() {
         return Ok(Json(BulkMessageOpResponse { failed_uids: vec![] }).into_response());
@@ -1482,6 +1507,12 @@ pub async fn bulk_delete_messages(
     })
     .await
     .map_err(|e| AppError::InternalError(format!("Database error: {e}")))?;
+
+    if let Ok(index) = search_engine.open_user_index(&session.user_hash) {
+        for uid in &body.uids {
+            let _ = index.delete_message(*uid, &folder_for_index);
+        }
+    }
 
     Ok(Json(BulkMessageOpResponse { failed_uids }).into_response())
 }

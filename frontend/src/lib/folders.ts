@@ -27,3 +27,31 @@ export function resolveFolderId(queryClient: QueryClient, name: string): FolderI
   }
   return id;
 }
+
+/**
+ * Resolve a special folder's real name by IMAP special-use attribute first
+ * (e.g. `\Trash`), falling back to a case-insensitive name match. Returns
+ * `null` when the folder list is not loaded or has no match.
+ *
+ * This avoids hardcoding localized/server-specific names (a server may call
+ * the trash folder "Deleted Items" or similar) while still targeting a real
+ * folder that `resolveFolderId` can resolve.
+ */
+export function resolveSpecialFolderName(
+  queryClient: QueryClient,
+  candidates: string[],
+  attribute: string,
+): string | null {
+  const folders = queryClient.getQueryData<FoldersResponse>(["folders"])?.folders;
+  if (!folders) return null;
+
+  const attr = attribute.toLowerCase();
+  const byAttribute = folders.find((f) =>
+    f.attributes?.some((a) => a.toLowerCase() === attr),
+  );
+  if (byAttribute) return byAttribute.name;
+
+  const lowered = candidates.map((c) => c.toLowerCase());
+  const byName = folders.find((f) => lowered.includes(f.name.toLowerCase()));
+  return byName?.name ?? null;
+}
