@@ -1,13 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { AnimatedDiv } from "@/lib/motion/AnimatedDiv";
-import { ArrowDown, ArrowUp, Loader2, Paperclip, SearchX } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Loader2, Mail, MailOpen, Paperclip, Star, Trash2, X, SearchX } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Chip } from "@/components/ui/Chip";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/stores/useUiStore";
 import { useSearch } from "@/hooks/useSearch";
+import {
+  useBulkUpdateFlags,
+  useBulkMoveMessages,
+  useBulkDeleteMessages,
+} from "@/hooks/useMessages";
+import { resolveSpecialFolderName } from "@/lib/folders";
 import {
   getFilterLabel,
   isValidCommittedSearch,
@@ -16,6 +25,9 @@ import {
   removeFilterFromQuery,
 } from "@/lib/search-parser";
 import type { SearchResultItem } from "@/types/message";
+
+const resultKey = (r: Pick<SearchResultItem, "folder_name" | "uid">) =>
+  `${r.folder_name}::${r.uid}`;
 
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -65,11 +77,13 @@ function formatDate(dateStr: string): string {
 function SearchResultRow({
   result,
   isSelected,
+  isBulkSelected,
   onClick,
 }: {
   result: SearchResultItem;
   isSelected: boolean;
-  onClick: () => void;
+  isBulkSelected: boolean;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
   const sender = result.from_name || result.from_address;
   const formattedDate = formatDate(result.date);
@@ -87,16 +101,23 @@ function SearchResultRow({
         "hover:bg-accent active:bg-accent/70",
         isUnread ? "bg-background" : "bg-transparent",
         isSelected && "bg-accent hover:bg-accent active:bg-accent/70",
+        isBulkSelected && "bg-primary/10 hover:bg-primary/15 active:bg-primary/20",
       )}
     >
-      {/* Top row: unread dot, sender, folder badge, date */}
+      {/* Top row: bulk checkbox or unread dot, sender, folder badge, date */}
       <div className="flex items-center gap-2">
-        <span
-          className={cn(
-            "size-1.5 shrink-0 rounded-full",
-            isUnread ? "bg-primary" : "bg-transparent",
-          )}
-        />
+        {isBulkSelected ? (
+          <span className="flex size-4 shrink-0 items-center justify-center rounded border border-primary bg-primary text-primary-foreground">
+            <Check className="size-3" />
+          </span>
+        ) : (
+          <span
+            className={cn(
+              "size-1.5 shrink-0 rounded-full",
+              isUnread ? "bg-primary" : "bg-transparent",
+            )}
+          />
+        )}
         <span className={cn(
           "min-w-0 flex-1 truncate text-sm",
           isUnread ? "font-semibold" : "font-medium",
@@ -188,6 +209,25 @@ export function SearchResults() {
   // Parse filters for display in the results header
   const parsed = parseSearchQuery(normalizedSearchQuery);
 
+  // ---- Multi-selection (shift/cmd) across search results ----
+  const queryClient = useQueryClient();
+  const bulkUpdateFlags = useBulkUpdateFlags();
+  const bulkMoveMessages = useBulkMoveMessages();
+  const bulkDeleteMessages = useBulkDeleteMessages();
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [isBulkBusy, setIsBulkBusy] = useState(false);
+  const anchorIndexRef = useRef<number | null>(null);
+
+  const clearSelection = useCallback(() => {
+    setSelectedKeys(new Set());
+    anchorIndexRef.current = null;
+  }, []);
+
+  // Clear the selection whenever the query or ordering changes.
+  useEffect(() => {
+    clearSelection();
+  }, [normalizedSearchQuery, searchSortOrder, clearSelection]);
+
   const handleRemoveFilter = useCallback(
     (filterRaw: string) => {
       const nextQuery = normalizeSearchQuery(removeFilterFromQuery(searchQuery, filterRaw));
@@ -256,13 +296,124 @@ export function SearchResults() {
     return () => observer.disconnect();
   }, [hasNextPage, fetchNextPage]);
 
-  const handleResultClick = useCallback(
-    (result: SearchResultItem) => {
+  const handleRowClick = useCallback(
+    (result: SearchResultItem, index: number, e: React.MouseEvent<HTMLButtonElement>) => {
+      const isMod = e.metaKey || e.ctrlKey;
+      const isShift = e.shiftKey;
+
+      if (isMod) {
+        e.preventDefault();
+        setSelectedKeys((prev) => {
+          const next = new Set(prev);
+          const key = resultKey(result);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        });
+        anchorIndexRef.current = index;
+        return;
+      }
+
+      if (isShift && anchorIndexRef.current != null) {
+        e.preventDefault();
+        const start = Math.min(anchorIndexRef.current, index);
+        const end = Math.max(anchorIndexRef.current, index);
+        const next = new Set<string>();
+        for (let i = start; i <= end; i++) {
+          const r = results[i];
+          if (r) next.add(resultKey(r));
+        }
+        setSelectedKeys(next);
+        return;
+      }
+
+      // Plain click: clear bulk selection and open the message.
+      clearSelection();
+      anchorIndexRef.current = index;
       setActiveFolder(result.folder_name);
       selectMessage(result.uid);
     },
-    [setActiveFolder, selectMessage],
+    [results, clearSelection, setActiveFolder, selectMessage],
   );
+
+  // Selected uids grouped by their folder, since bulk endpoints are per-folder.
+  const groups = useMemo(() => {
+    const map = new Map<string, number[]>();
+    for (const r of results) {
+      if (selectedKeys.has(resultKey(r))) {
+        const arr = map.get(r.folder_name) ?? [];
+        arr.push(r.uid);
+        map.set(r.folder_name, arr);
+      }
+    }
+    return map;
+  }, [results, selectedKeys]);
+
+  const selectedCount = useMemo(() => {
+    let n = 0;
+    for (const arr of groups.values()) n += arr.length;
+    return n;
+  }, [groups]);
+
+  const handleBulkFlags = useCallback(
+    async (flags: string[], add: boolean) => {
+      setIsBulkBusy(true);
+      try {
+        for (const [folder, uids] of groups) {
+          await bulkUpdateFlags.mutateAsync({ folder, uids, flags, add });
+        }
+        clearSelection();
+      } catch (err) {
+        toast.error(`Falha na ação: ${(err as Error).message}`);
+      } finally {
+        setIsBulkBusy(false);
+      }
+    },
+    [groups, bulkUpdateFlags, clearSelection],
+  );
+
+  const handleBulkDelete = useCallback(async () => {
+    const trashName = resolveSpecialFolderName(queryClient, ["Trash"], "\\trash");
+    if (!trashName) {
+      toast.error("Pasta de lixeira não encontrada.");
+      return;
+    }
+    if (
+      selectedMessageUid != null &&
+      selectedKeys.has(`${activeFolder}::${selectedMessageUid}`)
+    ) {
+      selectMessage(null);
+    }
+    setIsBulkBusy(true);
+    try {
+      for (const [folder, uids] of groups) {
+        if (folder === trashName) {
+          await bulkDeleteMessages.mutateAsync({ folder, uids });
+        } else {
+          await bulkMoveMessages.mutateAsync({
+            fromFolder: folder,
+            toFolder: trashName,
+            uids,
+          });
+        }
+      }
+      clearSelection();
+    } catch (err) {
+      toast.error(`Falha ao excluir: ${(err as Error).message}`);
+    } finally {
+      setIsBulkBusy(false);
+    }
+  }, [
+    queryClient,
+    selectedMessageUid,
+    activeFolder,
+    selectedKeys,
+    selectMessage,
+    groups,
+    bulkDeleteMessages,
+    bulkMoveMessages,
+    clearSelection,
+  ]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -335,6 +486,68 @@ export function SearchResults() {
             </div>
           )}
 
+          {/* Bulk action bar (appears when results are multi-selected) */}
+          {selectedCount > 0 && (
+            <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-muted/50 px-2 py-1">
+              <span className="mr-1 text-xs font-medium">
+                {selectedCount} selecionado{selectedCount !== 1 ? "s" : ""}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs"
+                title="Marcar como lido"
+                disabled={isBulkBusy}
+                onClick={() => handleBulkFlags(["\\Seen"], true)}
+              >
+                <MailOpen className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs"
+                title="Marcar como não lido"
+                disabled={isBulkBusy}
+                onClick={() => handleBulkFlags(["\\Seen"], false)}
+              >
+                <Mail className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs"
+                title="Favoritar"
+                disabled={isBulkBusy}
+                onClick={() => handleBulkFlags(["\\Flagged"], true)}
+              >
+                <Star className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs text-destructive hover:text-destructive"
+                title="Excluir"
+                disabled={isBulkBusy}
+                onClick={handleBulkDelete}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+              {isBulkBusy ? (
+                <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  title="Limpar seleção"
+                  onClick={clearSelection}
+                >
+                  <X className="size-3.5" />
+                </Button>
+              )}
+            </div>
+          )}
+
           <AnimatePresence initial={false}>
             {results.length > 0 && (
               <AnimatedDiv
@@ -348,7 +561,7 @@ export function SearchResults() {
                 className="min-h-0 flex-1 overflow-y-auto"
               >
                 <AnimatePresence initial={false}>
-                  {results.map((result) => (
+                  {results.map((result, index) => (
                     <AnimatedDiv
                       key={`${result.folder_name}-${result.uid}`}
                       data-testid="search-results-item-transition"
@@ -363,7 +576,8 @@ export function SearchResults() {
                           activeFolder === result.folder_name &&
                           selectedMessageUid === result.uid
                         }
-                        onClick={() => handleResultClick(result)}
+                        isBulkSelected={selectedKeys.has(resultKey(result))}
+                        onClick={(e) => handleRowClick(result, index, e)}
                       />
                     </AnimatedDiv>
                   ))}
