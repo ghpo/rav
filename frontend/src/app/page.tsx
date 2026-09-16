@@ -177,6 +177,9 @@ export default function Home() {
 
       const abort = new AbortController();
       abortRef.current = abort;
+      // Never let a passkey ceremony hang the login (mobile browsers can wait
+      // for the full platform timeout when no credential is available).
+      const timeoutId = setTimeout(() => abort.abort(), 20000);
 
       let cred: PublicKeyCredential;
       try {
@@ -185,9 +188,13 @@ export default function Home() {
           signal: abort.signal,
         })) as PublicKeyCredential;
       } catch {
+        clearTimeout(timeoutId);
         setStep("password");
+        setError("Passkey indisponível. Use sua senha.");
         setLoading(false);
         return;
+      } finally {
+        clearTimeout(timeoutId);
       }
 
       if (!cred) {
@@ -222,13 +229,16 @@ export default function Home() {
     }
   }
 
-  async function handleEmailContinue(e: FormEvent) {
+  function handleEmailContinue(e: FormEvent) {
     e.preventDefault();
-    // Capture autofilled password into state so the password step is pre-filled
-    // if the passkey attempt fails or is cancelled. Always try passkey first.
+    // Capture autofilled password into state so the password step is pre-filled.
+    // We deliberately do NOT auto-trigger a passkey ceremony here: on mobile a
+    // pending ceremony can block the password step for many seconds. Passkeys
+    // are offered as an explicit button on the password step instead.
     const autofilled = hiddenPasswordRef.current?.value ?? "";
     if (autofilled) setPassword(autofilled);
-    await attemptPasskey(email);
+    setError(null);
+    setStep("password");
   }
 
   async function handlePasswordSubmit(e: FormEvent) {
@@ -402,6 +412,19 @@ export default function Home() {
                 >
                   {loading ? "Signing in..." : "Sign in"}
                 </Button>
+
+                {supportsPasskey && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    size="lg"
+                    disabled={loading}
+                    onClick={() => void attemptPasskey(email)}
+                  >
+                    Sign in with passkey
+                  </Button>
+                )}
 
               </form>
             )}
