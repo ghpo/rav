@@ -32,7 +32,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::ConnectInfo;
+use axum::extract::{ConnectInfo, DefaultBodyLimit};
 use axum::http::Request;
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Extension, Router, middleware};
@@ -483,6 +483,11 @@ pub fn create_router(svc: AppServices) -> Router {
         .route("/mfa/passkeys/{id}", delete(mfa::passkey_delete))
         .route("/mfa/settings/passkey-only", put(mfa::passkey_only_set))
         .route("/link", get(link_proxy::redirect))
+        // Allow large request bodies for authenticated data routes (attachment
+        // uploads). Axum's default 2 MB limit rejects multipart uploads with a
+        // generic "Error parsing multipart/form-data request". The handler still
+        // enforces a 5 MB per-file cap.
+        .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
         .layer(middleware::from_fn(auth_guard))
         .layer(middleware::from_fn(csrf_protection));
 

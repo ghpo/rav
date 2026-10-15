@@ -12,8 +12,17 @@ use crate::config::AppConfig;
 use crate::db;
 use crate::error::AppError;
 
-/// Maximum attachment file size: 25 MB.
-const MAX_ATTACHMENT_SIZE: usize = 25 * 1024 * 1024;
+/// Maximum attachment file size: 5 MB.
+const MAX_ATTACHMENT_SIZE: usize = 5 * 1024 * 1024;
+
+/// Map a multipart parsing error to a `BadRequest`, including the underlying
+/// cause (the axum Display is generic and hides e.g. the body size limit).
+fn multipart_error(err: axum::extract::multipart::MultipartError, context: &str) -> AppError {
+    let detail = std::error::Error::source(&err)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| err.to_string());
+    AppError::BadRequest(format!("{context}: {detail}"))
+}
 
 #[derive(Debug, Serialize)]
 struct UploadResponse {
@@ -92,7 +101,7 @@ pub async fn upload_attachment(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| AppError::BadRequest(format!("Invalid multipart data: {e}")))?
+        .map_err(|e| multipart_error(e, "Invalid multipart data"))?
     {
         let filename = field
             .file_name()
@@ -106,11 +115,11 @@ pub async fn upload_attachment(
         let data = field
             .bytes()
             .await
-            .map_err(|e| AppError::BadRequest(format!("Failed to read field data: {e}")))?;
+            .map_err(|e| multipart_error(e, "Failed to read field data"))?;
 
         if data.len() > MAX_ATTACHMENT_SIZE {
             return Err(AppError::BadRequest(format!(
-                "File '{}' exceeds maximum size of 25 MB",
+                "File '{}' exceeds maximum size of 5 MB",
                 filename
             )));
         }
